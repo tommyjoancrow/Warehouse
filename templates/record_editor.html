@@ -63,6 +63,21 @@
                                 {% endfor %}
                                 {% if not opts %}<span class="rec-hint">No options yet — edit this column to add some.</span>{% endif %}
                             </div>
+                        {% elif c.type == 'tag' %}
+                            {% set tags = raw | from_json %}
+                            <div class="tag-picker" data-col="{{ c.id }}">
+                                <div class="tag-chips" id="tag-chips-{{ c.id }}">
+                                    {% for tg in tags %}
+                                    <span class="chip" data-val="{{ tg }}">{{ tg }}
+                                        <button type="button" class="chip-x" onclick="removeTag({{ c.id }}, this)">✕</button>
+                                        <input type="hidden" name="col_{{ c.id }}" value="{{ tg }}">
+                                    </span>
+                                    {% endfor %}
+                                </div>
+                                <input type="text" class="form-input tag-input" placeholder="Add tags (comma to separate)…"
+                                       oninput="tagInput({{ c.id }}, this)" onkeydown="tagKey(event, {{ c.id }}, this)" onfocus="tagInput({{ c.id }}, this)">
+                                <div class="tag-results hidden" id="tag-results-{{ c.id }}"></div>
+                            </div>
                         {% elif c.type == 'link' %}
                             {% set link_opts = c.options | from_json %}
                             {% set linked = raw | from_json %}
@@ -156,6 +171,55 @@ function removeLink(colId, id){
     if (chip) chip.remove();
 }
 
+// ── Tag field ─────────────────────────────────────────────────
+function addTag(colId, val){
+    val = (val||'').trim();
+    if (!val) return;
+    var chips = document.getElementById('tag-chips-'+colId);
+    var existing = Array.from(chips.querySelectorAll('.chip')).map(function(c){return c.dataset.val.toLowerCase();});
+    if (existing.indexOf(val.toLowerCase()) !== -1) return;  // no dupes
+    var span = document.createElement('span');
+    span.className = 'chip'; span.dataset.val = val;
+    span.innerHTML = escapeHtml(val)+' <button type="button" class="chip-x" onclick="removeTag('+colId+', this)">✕</button><input type="hidden" name="col_'+colId+'" value="'+escapeHtml(val)+'">';
+    chips.appendChild(span);
+}
+function removeTag(colId, btn){ btn.closest('.chip').remove(); }
+function tagKey(e, colId, input){
+    if (e.key===',' || e.key==='Enter'){
+        e.preventDefault();
+        addTag(colId, input.value.replace(/,/g,''));
+        input.value = '';
+        document.getElementById('tag-results-'+colId).classList.add('hidden');
+    } else if (e.key==='Backspace' && input.value===''){
+        var chips = document.getElementById('tag-chips-'+colId);
+        if (chips.lastElementChild) chips.lastElementChild.remove();
+    }
+}
+function tagInput(colId, input){
+    // commit on pasted commas
+    if (input.value.indexOf(',') !== -1){
+        input.value.split(',').forEach(function(p){ addTag(colId, p); });
+        input.value = '';
+    }
+    var q = input.value.trim();
+    fetch('/api/columns/'+colId+'/tag-options?q='+encodeURIComponent(q))
+        .then(function(r){return r.json();})
+        .then(function(opts){
+            var box = document.getElementById('tag-results-'+colId);
+            var chosen = Array.from(document.getElementById('tag-chips-'+colId).querySelectorAll('.chip')).map(function(c){return c.dataset.val.toLowerCase();});
+            var avail = opts.filter(function(o){ return chosen.indexOf(o.toLowerCase())===-1; });
+            if (!avail.length){ box.classList.add('hidden'); return; }
+            box.innerHTML = avail.map(function(o){ return '<div class="tag-result" onmousedown="event.preventDefault(); pickTag('+colId+',\''+escapeJs(o)+'\')">'+escapeHtml(o)+'</div>'; }).join('');
+            box.classList.remove('hidden');
+        });
+}
+function pickTag(colId, val){
+    addTag(colId, val);
+    var picker = document.querySelector('.tag-picker[data-col="'+colId+'"]');
+    picker.querySelector('.tag-input').value = '';
+    document.getElementById('tag-results-'+colId).classList.add('hidden');
+}
+
 // ── [[ note linking inside rich text ─────────────────────────
 function setupNoteLink(quill){
     var dd = document.createElement('div');
@@ -226,6 +290,7 @@ function escapeJs(s){ return String(s).replace(/'/g,"\\'").replace(/"/g,'&quot;'
 
 document.addEventListener('click', function(e){
     if(!e.target.closest('.link-picker')){ document.querySelectorAll('.link-results').forEach(function(b){b.classList.add('hidden');}); }
+    if(!e.target.closest('.tag-picker')){ document.querySelectorAll('.tag-results').forEach(function(b){b.classList.add('hidden');}); }
 });
 </script>
 {% endblock %}

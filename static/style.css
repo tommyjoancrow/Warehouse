@@ -2197,3 +2197,69 @@ kbd {
 .link-result:hover { background: var(--green-light); color: var(--green-dark); }
 
 .edit-col-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+/* ── Grid header: sort / caret menu / insert / drag ─────────── */
+#data-table thead th[data-col-id] { position: relative; cursor: grab; }
+#data-table thead th[data-col-id]:active { cursor: grabbing; }
+.th-inner { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 7px 10px; }
+.th-label { cursor: pointer; flex: 1; display: flex; align-items: center; gap: 4px; }
+.th-label:hover { color: var(--green); }
+.th-sort { font-size: 9px; color: var(--green); }
+.th-caret {
+    background: none; border: none; cursor: pointer; color: var(--text-faint);
+    font-size: 11px; padding: 2px 4px; border-radius: 4px; opacity: 0;
+}
+th:hover .th-caret { opacity: 1; }
+.th-caret:hover { background: var(--green-light); color: var(--green); }
+
+.th-insert {
+    position: absolute; right: -9px; top: 50%; transform: translateY(-50%);
+    width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text-muted); cursor: pointer; font-size: 11px;
+    line-height: 1; padding: 0; z-index: 6; opacity: 0;
+}
+th:hover .th-insert { opacity: 1; }
+.th-insert:hover { background: var(--green); color: #fff; border-color: var(--green); }
+
+.th-dragging { opacity: .4; }
+.th-drop { box-shadow: inset 3px 0 0 var(--green); }
+
+.col-menu {
+    position: absolute; top: 100%; left: 6px; z-index: 30; min-width: 170px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 18px rgba(0,0,0,.12); padding: 4px; font-weight: 400;
+}
+.col-menu-item { padding: 7px 10px; font-size: 13px; cursor: pointer; border-radius: 5px; color: var(--text); }
+.col-menu-item:hover { background: var(--green-light); color: var(--green-dark); }
+.col-menu-danger:hover { background: #fdeaea; color: #c0392b; }
+.col-menu-divider { height: 1px; background: var(--border); margin: 4px 0; }
+
+/* ── Add-field modal: existing vs new ───────────────────────── */
+.field-section-label, #existing-fields-section .field-section-label {
+    display: block; font-size: 12px; font-weight: 600; color: var(--text-muted); margin: 0 0 8px;
+}
+#existing-fields-section { padding: 4px 0 0; }
+#existing-fields-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.existing-field-btn {
+    border: 1px solid var(--border); background: var(--bg); border-radius: 6px;
+    padding: 5px 10px; font-size: 13px; cursor: pointer; color: var(--text);
+}
+.existing-field-btn:hover { border-color: var(--green); background: var(--green-light); color: var(--green-dark); }
+.eff-type { font-size: 10px; color: var(--text-faint); text-transform: uppercase; }
+.or-divider { text-align: center; margin: 14px 0 6px; border-top: 1px solid var(--border); position: relative; }
+.or-divider span {
+    position: relative; top: -9px; background: var(--bg); padding: 0 10px;
+    font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .4px;
+}
+
+/* ── Tag picker (record editor) ─────────────────────────────── */
+.tag-picker { position: relative; }
+.tag-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.tag-input { width: 100%; }
+.tag-results {
+    position: absolute; z-index: 50; left: 0; right: 0; top: 100%; margin-top: 2px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 18px rgba(0,0,0,.1); max-height: 200px; overflow-y: auto;
+}
+.tag-result { padding: 7px 12px; font-size: 13px; cursor: pointer; }
+.tag-result:hover { background: var(--green-light); color: var(--green-dark); }

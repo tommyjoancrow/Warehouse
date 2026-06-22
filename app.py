@@ -21,6 +21,7 @@ COLUMN_TYPES = [
     ('phone', 'Phone'),
     ('currency', 'Currency'),
     ('percent', 'Percent'),
+    ('tag', 'Tag list'),
     ('link', 'Link to record'),
 ]
 COLUMN_TYPE_KEYS = [t[0] for t in COLUMN_TYPES]
@@ -40,7 +41,7 @@ def ops_for_type(t):
     if t == 'date': return DATE_OPS
     if t == 'checkbox': return CHECK_OPS
     if t == 'select': return SELECT_OPS
-    if t == 'multiselect': return MULTI_OPS
+    if t in ('multiselect', 'tag'): return MULTI_OPS
     if t == 'link': return LINK_OPS
     return TEXT_OPS
 
@@ -101,6 +102,7 @@ CREATE TABLE IF NOT EXISTS views (
     filter_logic TEXT DEFAULT 'AND',
     sorts_json TEXT DEFAULT '[]',
     hidden_columns_json TEXT DEFAULT '[]',
+    column_order_json TEXT DEFAULT '[]',
     date_column_id INTEGER DEFAULT NULL,
     position INTEGER DEFAULT 0,
     created_at TEXT NOT NULL
@@ -110,6 +112,10 @@ CREATE TABLE IF NOT EXISTS views (
 def init_db():
     conn = get_db()
     conn.executescript(SCHEMA)
+    # migrations for existing DBs
+    view_cols = [r[1] for r in conn.execute("PRAGMA table_info(views)").fetchall()]
+    if 'column_order_json' not in view_cols:
+        conn.execute("ALTER TABLE views ADD COLUMN column_order_json TEXT DEFAULT '[]'")
     conn.commit()
     # purge trash > 30 days
     cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d %H:%M")
@@ -276,7 +282,7 @@ def cell_match(col_type, raw, op, fval):
     elif col_type == 'select':
         if op == 'equals': return raw == fval
         if op == 'not_equals': return raw != fval
-    elif col_type == 'multiselect':
+    elif col_type in ('multiselect', 'tag'):
         try:
             items = [str(i).lower() for i in (json.loads(raw) if raw else [])]
         except Exception:
@@ -367,7 +373,7 @@ def format_cell(col, raw, link_names):
         # strip tags crudely for preview
         import re
         return re.sub('<[^<]+?>', '', raw)[:120]
-    if t == 'multiselect':
+    if t in ('multiselect', 'tag'):
         try:
             return json.loads(raw) if raw else []
         except Exception:
@@ -445,7 +451,22 @@ def _render_table(conn, table, view):
     views = [dict(v) for v in conn.execute(
         "SELECT * FROM views WHERE table_id=? ORDER BY position, id", (table['id'],)).fetchall()]
     hidden_set = set(int(h) for h in hidden)
-    visible_columns = [c for c in columns if c['id'] not in hidden_set]
+    # column order: per-view order if set, else global position
+    ordered = columns
+    if view and view['column_order_json']:
+        try:
+            order = json.loads(view['column_order_json'])
+        except Exception:
+            order = []
+        if order:
+            id2col = {c['id']: c for c in columns}
+            seen = set()
+            ordered = []
+            for cid in order:
+                if cid in id2col:
+                    ordered.append(id2col[cid]); seen.add(cid)
+            ordered += [c for c in columns if c['id'] not in seen]
+    visible_columns = [c for c in ordered if c['id'] not in hidden_set]
     primary = primary_column(columns)
     # calendar date column + month grid
     date_col_id = None
@@ -590,8 +611,8 @@ def _save_cells(conn, record_id, columns, form):
         key = f"col_{c['id']}"
         if c['type'] == 'checkbox':
             val = '1' if form.get(key) else '0'
-        elif c['type'] == 'multiselect':
-            vals = form.getlist(key)
+        elif c['type'] in ('multiselect', 'tag'):
+            vals = [v.strip() for v in form.getlist(key) if v.strip()]
             val = json.dumps(vals)
         elif c['type'] == 'link':
             vals = form.getlist(key)
@@ -763,14 +784,48 @@ def add_column_route(table_id):
         options = [o.strip() for o in raw.split(',') if o.strip()]
     elif ctype == 'link':
         options = {'target_table_id': table_id}  # one workspace: links point within it
+    view_id = request.form.get('view_id', type=int)
+    after_id = request.form.get('after_column_id', type=int)
     conn = get_db()
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     maxpos = conn.execute("SELECT COALESCE(MAX(position),0)+1 FROM columns WHERE table_id=?", (table_id,)).fetchone()[0]
-    conn.execute("INSERT INTO columns (table_id,name,type,position,options,created_at) VALUES (?,?,?,?,?,?)",
-                 (table_id, name, ctype, maxpos, json.dumps(options), now))
+    new_id = conn.execute("INSERT INTO columns (table_id,name,type,position,options,created_at) VALUES (?,?,?,?,?,?)",
+                          (table_id, name, ctype, maxpos, json.dumps(options), now)).lastrowid
+    if view_id:
+        _view_insert_field(conn, view_id, new_id, after_id)
     conn.commit()
     conn.close()
     return redirect(request.referrer or url_for('table_view', table_id=table_id))
+
+def _view_insert_field(conn, view_id, column_id, after_id):
+    """Make column visible in a view and place it right after after_id in the
+    view's column order."""
+    v = conn.execute("SELECT * FROM views WHERE id=?", (view_id,)).fetchone()
+    if not v:
+        return
+    table_id = v['table_id']
+    all_cols = [c['id'] for c in conn.execute(
+        "SELECT id FROM columns WHERE table_id=? ORDER BY position, id", (table_id,)).fetchall()]
+    try:
+        order = json.loads(v['column_order_json']) or []
+    except Exception:
+        order = []
+    # normalise order to a full list of current columns
+    order = [c for c in order if c in all_cols]
+    order += [c for c in all_cols if c not in order]
+    if column_id in order:
+        order.remove(column_id)
+    if after_id and after_id in order:
+        order.insert(order.index(after_id) + 1, column_id)
+    else:
+        order.append(column_id)
+    try:
+        hidden = json.loads(v['hidden_columns_json']) or []
+    except Exception:
+        hidden = []
+    hidden = [h for h in hidden if h != column_id]
+    conn.execute("UPDATE views SET column_order_json=?, hidden_columns_json=? WHERE id=?",
+                 (json.dumps(order), json.dumps(hidden), view_id))
 
 @app.route("/api/columns/<int:column_id>/update", methods=["POST"])
 def update_column(column_id):
@@ -809,11 +864,66 @@ def delete_column(column_id):
 
 @app.route("/api/columns/reorder", methods=["POST"])
 def reorder_columns():
+    """Reorder globally (used by the base 'All records' table)."""
     data = request.get_json() or {}
     order = data.get('order', [])  # list of column ids
     conn = get_db()
     for i, cid in enumerate(order):
         conn.execute("UPDATE columns SET position=? WHERE id=?", (i, cid))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/columns/<int:column_id>/tag-options")
+def tag_options(column_id):
+    """Distinct tag values already used in this column (for autocomplete)."""
+    q = request.args.get('q', '').strip().lower()
+    conn = get_db()
+    seen = {}
+    for cv in conn.execute("SELECT value FROM cell_values WHERE column_id=?", (column_id,)).fetchall():
+        try:
+            for t in json.loads(cv['value']) if cv['value'] else []:
+                t = str(t).strip()
+                if t and (not q or q in t.lower()):
+                    seen[t.lower()] = t
+        except Exception:
+            pass
+    conn.close()
+    return jsonify(sorted(seen.values())[:15])
+
+@app.route("/api/views/<int:view_id>/show-field", methods=["POST"])
+def view_show_field(view_id):
+    data = request.get_json() or {}
+    conn = get_db()
+    _view_insert_field(conn, view_id, data.get('column_id'), data.get('after_column_id'))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/views/<int:view_id>/hide-field", methods=["POST"])
+def view_hide_field(view_id):
+    data = request.get_json() or {}
+    cid = data.get('column_id')
+    conn = get_db()
+    v = conn.execute("SELECT hidden_columns_json FROM views WHERE id=?", (view_id,)).fetchone()
+    if v:
+        try:
+            hidden = json.loads(v['hidden_columns_json']) or []
+        except Exception:
+            hidden = []
+        if cid not in hidden:
+            hidden.append(cid)
+        conn.execute("UPDATE views SET hidden_columns_json=? WHERE id=?", (json.dumps(hidden), view_id))
+        conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/views/<int:view_id>/reorder", methods=["POST"])
+def view_reorder(view_id):
+    data = request.get_json() or {}
+    order = data.get('order', [])
+    conn = get_db()
+    conn.execute("UPDATE views SET column_order_json=? WHERE id=?", (json.dumps(order), view_id))
     conn.commit()
     conn.close()
     return jsonify({"ok": True})

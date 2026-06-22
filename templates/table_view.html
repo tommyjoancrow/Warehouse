@@ -98,7 +98,7 @@
                 {% endfor %}
             </div>
             <div class="sf-section">
-                <button type="button" class="sf-add-btn" onclick="openModal('modal-add-column')">+ Add column</button>
+                <button type="button" class="sf-add-btn" onclick="openAddField(null)">+ Add field</button>
             </div>
         </div>
     </form>
@@ -121,14 +121,27 @@
             <tr>
                 <th class="th-check"><input type="checkbox" id="select-all-cb" onchange="toggleSelectAll(this.checked)"></th>
                 {% for c in visible_columns %}
-                <th data-col-id="{{ c.id }}">
+                {% set sort_dir = (sorts | selectattr('c','equalto',c.id) | map(attribute='d') | first) %}
+                <th data-col-id="{{ c.id }}" draggable="true">
                     <div class="th-inner">
-                        <span class="th-label" onclick="openColumnEdit({{ c.id }})">{{ c.name }}</span>
-                        <span class="th-type">{{ c.type }}</span>
+                        <span class="th-label" onclick="sortByCol({{ c.id }})" title="Sort by {{ c.name }}">
+                            {{ c.name }}
+                            {% if sort_dir == 'asc' %}<span class="th-sort">▲</span>{% elif sort_dir == 'desc' %}<span class="th-sort">▼</span>{% endif %}
+                        </span>
+                        <button type="button" class="th-caret" onclick="openColMenu(event, {{ c.id }})" title="Field options">▾</button>
                     </div>
+                    <div class="col-menu hidden" id="colmenu-{{ c.id }}">
+                        <div class="col-menu-item" onclick="applyColSort({{ c.id }},'asc')">↑ Sort ascending</div>
+                        <div class="col-menu-item" onclick="applyColSort({{ c.id }},'desc')">↓ Sort descending</div>
+                        <div class="col-menu-divider"></div>
+                        <div class="col-menu-item" onclick="openColumnEdit({{ c.id }})">✎ Edit field</div>
+                        {% if view %}<div class="col-menu-item" onclick="hideField({{ c.id }})">🙈 Hide field</div>{% endif %}
+                        <div class="col-menu-item col-menu-danger" onclick="deleteColumnById({{ c.id }})">🗑 Delete field</div>
+                    </div>
+                    <button type="button" class="th-insert" onclick="openAddField({{ c.id }})" title="Insert field here">+</button>
                 </th>
                 {% endfor %}
-                <th class="th-addcol"><button type="button" class="addcol-btn" onclick="openModal('modal-add-column')" title="Add column">+</button></th>
+                <th class="th-addcol"><button type="button" class="addcol-btn" onclick="openAddField(null)" title="Add field">+</button></th>
             </tr>
         </thead>
         <tbody>
@@ -137,11 +150,11 @@
                 <td class="td-check"><input type="checkbox" class="row-cb" value="{{ rec.id }}" onchange="onRowCheck()"></td>
                 {% for c in visible_columns %}
                 <td class="data-cell" data-record-id="{{ rec.id }}" data-col-id="{{ c.id }}" data-type="{{ c.type }}"
-                    {% if c.type not in ('longtext','multiselect','link') %}onclick="startInlineEdit(this)"{% else %}onclick="window.location='/record/{{ rec.id }}'"{% endif %}>
+                    {% if c.type not in ('longtext','multiselect','tag','link') %}onclick="startInlineEdit(this)"{% else %}onclick="window.location='/record/{{ rec.id }}'"{% endif %}>
                     {% set d = rec.display[c.id] %}
                     {% if c.type == 'checkbox' %}
                         <input type="checkbox" {% if d=='✓' %}checked{% endif %} onclick="event.stopPropagation(); toggleCheckbox({{ rec.id }},{{ c.id }},this.checked)">
-                    {% elif c.type == 'multiselect' %}
+                    {% elif c.type in ('multiselect','tag') %}
                         {% for v in d %}<span class="chip">{{ v }}</span>{% endfor %}
                     {% elif c.type == 'link' %}
                         {% for v in d %}<span class="chip chip-link">↗ {{ v }}</span>{% endfor %}
@@ -159,7 +172,6 @@
             {% endfor %}
         </tbody>
     </table>
-    <a href="/record/new?table_id={{ table.id }}{% if view %}&view_id={{ view.id }}{% endif %}" class="grid-add-row">+ New record</a>
     {% if not records %}
     <div class="empty-state-inline">No records match. <a href="{{ request.path }}">Clear filters</a> or <a href="/record/new?table_id={{ table.id }}{% if view %}&view_id={{ view.id }}{% endif %}">add one</a>.</div>
     {% endif %}
@@ -182,7 +194,7 @@
                     <span class="card-field-label">{{ c.name }}</span>
                     <span class="card-field-val">
                         {% if c.type == 'checkbox' %}{{ '✓' if d=='✓' else '—' }}
-                        {% elif c.type in ('multiselect','link') %}{% for v in d %}<span class="chip">{{ v }}</span>{% endfor %}
+                        {% elif c.type in ('multiselect','tag','link') %}{% for v in d %}<span class="chip">{{ v }}</span>{% endfor %}
                         {% elif c.type == 'select' and d %}<span class="chip chip-select">{{ d }}</span>
                         {% else %}{{ d }}{% endif %}
                     </span>
@@ -200,7 +212,7 @@
 {% elif view_type == 'calendar' %}
     {% if not date_col_id %}
     <div class="empty-state"><div class="empty-icon">📅</div><p>This table has no date column to anchor a calendar on.</p>
-    <button class="btn-primary" onclick="openModal('modal-add-column')">Add a date column</button></div>
+    <button class="btn-primary" onclick="openAddField(null)">Add a date column</button></div>
     {% else %}
     <div class="cal-wrap">
         <div class="cal-header">
@@ -232,13 +244,22 @@
 
 {% endif %}{# table exists #}
 
-<!-- ADD COLUMN MODAL -->
+<!-- ADD FIELD MODAL -->
 <div class="modal hidden" id="modal-add-column">
-    <div class="modal-header"><h3>Add Column</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
+    <div class="modal-header"><h3>Add Field</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
+
+    <div id="existing-fields-section">
+        <label class="field-section-label">Add an existing field</label>
+        <div id="existing-fields-list"></div>
+        <div class="or-divider"><span>or create a new field</span></div>
+    </div>
+
     <form action="/api/tables/{{ table.id }}/columns" method="post" id="add-col-form">
+        <input type="hidden" name="view_id" id="add-col-view" value="{{ view.id if view else '' }}">
+        <input type="hidden" name="after_column_id" id="add-col-after" value="">
         <div class="form-group">
-            <label>Column name</label>
-            <input type="text" name="name" placeholder="e.g. Priority, Email, Due Date" class="form-input" autofocus>
+            <label>Field name</label>
+            <input type="text" name="name" placeholder="e.g. Priority, Email, Tags" class="form-input" id="add-col-name">
         </div>
         <div class="form-group">
             <label>Type</label>
@@ -253,13 +274,16 @@
         <div class="form-group hidden" id="add-col-link-wrap">
             <p class="rec-hint">Links point to other records in your workspace.</p>
         </div>
-        <button type="submit" class="btn-primary">Add Column</button>
+        <div class="form-group hidden" id="add-col-tag-wrap">
+            <p class="rec-hint">A tag list. Type values separated by commas; existing tags autocomplete as you type.</p>
+        </div>
+        <button type="submit" class="btn-primary">Create field</button>
     </form>
 </div>
 
 <!-- EDIT COLUMN MODAL -->
 <div class="modal hidden" id="modal-edit-column">
-    <div class="modal-header"><h3>Edit Column</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
+    <div class="modal-header"><h3>Edit Field</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
     <form action="" method="post" id="edit-col-form">
         <div class="form-group">
             <label>Column name</label>
@@ -308,6 +332,8 @@
 var TABLE_ID = {{ table.id if table else 'null' }};
 var VIEW_ID = {{ active_view_id if active_view_id else 'null' }};
 var COLUMNS = {{ columns | tojson }};
+var VISIBLE_IDS = {{ visible_columns | map(attribute='id') | list | tojson }};
+var HIDDEN_IDS = {{ hidden | tojson }};
 var OPS_BY_TYPE = {{ ops_by_type | tojson }};
 var currentSorts = {{ sorts | tojson }};
 var currentFilters = {{ filters | tojson }};
@@ -404,11 +430,70 @@ function toggleColumnVis(){
     document.getElementById('filter-form').submit();
 }
 
+// ── Header: sort + field menu ─────────────────────────────────
+function sortByCol(colId){
+    var cur = currentSorts.length===1 && String(currentSorts[0].c)===String(colId) ? currentSorts[0].d : null;
+    var dir = cur==='asc' ? 'desc' : 'asc';
+    applyColSort(colId, dir);
+}
+function applyColSort(colId, dir){
+    currentSorts = [{c: colId, d: dir}];
+    document.getElementById('sorts-input').value = JSON.stringify(currentSorts);
+    document.getElementById('filter-form').submit();
+}
+function openColMenu(e, colId){
+    e.stopPropagation();
+    var menu = document.getElementById('colmenu-'+colId);
+    var wasHidden = menu.classList.contains('hidden');
+    document.querySelectorAll('.col-menu').forEach(function(m){ m.classList.add('hidden'); });
+    if (wasHidden) menu.classList.remove('hidden');
+}
+function hideField(colId){
+    if (!VIEW_ID) return;
+    fetch('/api/views/'+VIEW_ID+'/hide-field', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({column_id: colId})}).then(function(){ window.location.reload(); });
+}
+function deleteColumnById(colId){
+    if (!confirm('Delete this field and all its data, everywhere? This cannot be undone.')) return;
+    var f = document.createElement('form');
+    f.method='post'; f.action='/api/columns/'+colId+'/delete';
+    document.body.appendChild(f); f.submit();
+}
+
+// ── Add field (existing or new) ───────────────────────────────
+function openAddField(afterColId){
+    document.getElementById('add-col-after').value = afterColId || '';
+    // Build the "existing fields" list = fields hidden in this view
+    var section = document.getElementById('existing-fields-section');
+    var list = document.getElementById('existing-fields-list');
+    var hidden = COLUMNS.filter(function(c){ return HIDDEN_IDS.indexOf(c.id) !== -1; });
+    if (VIEW_ID && hidden.length){
+        list.innerHTML = hidden.map(function(c){
+            return '<button type="button" class="existing-field-btn" onclick="addExistingField('+c.id+')">'+escapeHtml(c.name)+' <span class="eff-type">'+c.type+'</span></button>';
+        }).join('');
+        section.classList.remove('hidden');
+    } else {
+        section.classList.add('hidden');
+    }
+    document.getElementById('add-col-name').value = '';
+    onColTypeChange('add');
+    openModal('modal-add-column');
+    setTimeout(function(){ document.getElementById('add-col-name').focus(); }, 50);
+}
+function addExistingField(colId){
+    var after = document.getElementById('add-col-after').value;
+    fetch('/api/views/'+VIEW_ID+'/show-field', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({column_id: colId, after_column_id: after ? parseInt(after) : null})})
+        .then(function(){ window.location.reload(); });
+}
+
 // ── Column add/edit ───────────────────────────────────────────
 function onColTypeChange(which){
     var t = document.getElementById(which+'-col-type').value;
     document.getElementById(which+'-col-options-wrap').classList.toggle('hidden', !(t==='select'||t==='multiselect'));
     document.getElementById(which+'-col-link-wrap').classList.toggle('hidden', t!=='link');
+    var tagWrap = document.getElementById(which+'-col-tag-wrap');
+    if (tagWrap) tagWrap.classList.toggle('hidden', t!=='tag');
 }
 function openColumnEdit(colId){
     var c = colById[colId];
@@ -424,12 +509,29 @@ function openColumnEdit(colId){
     openModal('modal-edit-column');
 }
 function deleteColumn(){
-    var colId = document.getElementById('edit-col-form').dataset.colId;
-    if (!confirm('Delete this column and all its data?')) return;
-    var f = document.createElement('form');
-    f.method='post'; f.action='/api/columns/'+colId+'/delete';
-    document.body.appendChild(f); f.submit();
+    deleteColumnById(document.getElementById('edit-col-form').dataset.colId);
 }
+
+// ── Drag to reorder columns ───────────────────────────────────
+var dragColId = null;
+document.querySelectorAll('#data-table thead th[data-col-id]').forEach(function(th){
+    th.addEventListener('dragstart', function(e){ dragColId = th.dataset.colId; th.classList.add('th-dragging'); });
+    th.addEventListener('dragend', function(){ th.classList.remove('th-dragging'); document.querySelectorAll('th').forEach(function(x){x.classList.remove('th-drop');}); });
+    th.addEventListener('dragover', function(e){ e.preventDefault(); if(dragColId && dragColId!==th.dataset.colId){ th.classList.add('th-drop'); } });
+    th.addEventListener('dragleave', function(){ th.classList.remove('th-drop'); });
+    th.addEventListener('drop', function(e){
+        e.preventDefault();
+        th.classList.remove('th-drop');
+        if (!dragColId || dragColId===th.dataset.colId) return;
+        var order = VISIBLE_IDS.map(function(x){return x;});
+        var from = order.indexOf(parseInt(dragColId)), to = order.indexOf(parseInt(th.dataset.colId));
+        if (from===-1||to===-1) return;
+        order.splice(to, 0, order.splice(from, 1)[0]);
+        var url = VIEW_ID ? '/api/views/'+VIEW_ID+'/reorder' : '/api/columns/reorder';
+        fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({order: order})})
+            .then(function(){ window.location.reload(); });
+    });
+});
 
 // ── Inline editing ────────────────────────────────────────────
 var editing = null;
@@ -528,10 +630,10 @@ function updateCurrentView(){
 
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
-// close panels/menus on outside click
+// close column menus on outside click
 document.addEventListener('click', function(e){
-    if (!e.target.closest('.col-menu') && !e.target.closest('.th-label')) {
-        // no-op; reserved
+    if (!e.target.closest('.col-menu') && !e.target.closest('.th-caret')) {
+        document.querySelectorAll('.col-menu').forEach(function(m){ m.classList.add('hidden'); });
     }
 });
 </script>

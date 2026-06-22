@@ -28,11 +28,9 @@ tables/columns/records/views model.
   day opens a new record but does not set that day as the date-column value.
 - 🔴 **No drag-to-reschedule on the calendar.** In the old version you could drag
   a task to a new day; that isn't wired up in the new model yet.
-- 🔴 **No drag-to-reorder columns in the grid.** The backend endpoint exists
-  (`/api/columns/reorder`) but there's no drag UI in the table header.
 - 🔴 **Link filter UX is raw.** The "links to" filter expects you to type a record
   *id* into the value box instead of picking a record by name.
-- 🔴 **No way to reorder tables or views in the sidebar.** Position is stored but
+- 🔴 **No way to reorder views in the sidebar.** Position is stored but
   there's no UI to change it.
 - 🔴 **Inline edit reloads the whole page** after every cell save. Works, but
   feels heavy — could update just the cell in place.
@@ -45,6 +43,12 @@ tables/columns/records/views model.
 
 ## ✅ Done
 
+- ✅ 2026-06-21 — Grid column improvements: **drag to reorder columns**
+  (per-view order), **click a header to sort** by it, **caret menu** per column
+  (Edit field / Hide field / Delete field), **"+" between columns** to insert a
+  field (pick an existing hidden field or create a new one), and removed the
+  bottom "new record" line. Added a new **Tag list** column type (comma-separated,
+  with autocomplete from tags already used in that column).
 - ✅ 2026-06-21 — Collapsed to a **single workspace table**. The sidebar now
   lists **views** (Companies, People, Tasks, Notes…) instead of tables — each
   is a saved filter (on a Type column) + hidden-column set into the one table.

@@ -1,42 +1,29 @@
 {% extends "layout.html" %}
-{% block title %}Search: {{ q }}{% endblock %}
+{% block title %}Search: {{ query }}{% endblock %}
 {% block content %}
 
 <div class="view-header">
     <div class="view-header-left">
-        <h1 class="view-title">Search results for "{{ q }}"</h1>
-        <span class="view-count">{{ notes|length }} results</span>
+        <h1 class="view-title">Search results for “{{ query }}”</h1>
+        <span class="view-subtitle">{{ results|length }} match{{ '' if results|length == 1 else 'es' }}</span>
     </div>
 </div>
 
-<div class="card-grid">
-    {% for note in notes %}
-    <div class="card">
-        <div class="card-top">
-            <div class="card-title-row">
-                <a href="/note/{{ note.id }}" class="card-title">{{ note.title }}</a>
-                <span class="badge badge-{{ note.status }}">{{ note.status }}</span>
-            </div>
-        </div>
-        <div class="card-body">{{ note.body | striptags | truncate(140) }}</div>
-        <div class="card-footer">
-            {% if note.tags_list %}
-            <div class="card-tags">
-                {% for tag in note.tags_list %}<span class="tag-chip">{{ tag.name }}</span>{% endfor %}
-            </div>
-            {% endif %}
-            <div class="card-meta-row">
-                <span class="card-date">{{ note.created_at[:10] }}</span>
-                <a href="/note/{{ note.id }}" class="btn-card-edit">Open</a>
-            </div>
-        </div>
-    </div>
-    {% endfor %}
-    {% if not notes %}
-    <div class="empty-state">
-        <div class="empty-icon">🔍</div>
-        <p>No results for "{{ q }}".</p>
-    </div>
+<div class="table-wrap">
+    {% if results %}
+    <table class="data-table">
+        <thead><tr><th>Record</th><th>Table</th></tr></thead>
+        <tbody>
+            {% for r in results %}
+            <tr onclick="window.location='/record/{{ r.id }}'" style="cursor:pointer">
+                <td>{{ r.label }}</td>
+                <td>{{ r.table_icon }} {{ r.table_name }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state"><div class="empty-icon">🔍</div><p>No results for “{{ query }}”.</p></div>
     {% endif %}
 </div>
 

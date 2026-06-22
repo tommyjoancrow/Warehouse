@@ -1,0 +1,231 @@
+{% extends "layout.html" %}
+{% block title %}{{ page_title }}{% endblock %}
+{% block content %}
+
+{% set primary = columns[0] if columns else None %}
+{% set title_val = (cells.get(primary.id, '') if primary else '') %}
+
+<div class="editor-shell">
+    <div class="editor-header">
+        <div class="editor-header-left">
+            <a href="/table/{{ table.id }}" class="btn-back">← {{ table.icon }} {{ table.name }}</a>
+        </div>
+        <div class="editor-header-right">
+            {% if record %}
+            <span id="autosave-status" class="autosave-status"></span>
+            <form method="post" action="/record/{{ record.id }}/delete" style="display:inline" onsubmit="return confirm('Move to trash?')">
+                <button class="btn-danger-outline btn-sm">🗑 Trash</button>
+            </form>
+            {% endif %}
+            <button type="submit" form="record-form" class="btn-primary">Save</button>
+        </div>
+    </div>
+
+    <div class="editor-scroll-single">
+        <form method="post" action="/record/save" id="record-form">
+            <input type="hidden" name="table_id" value="{{ table.id }}">
+            {% if record %}<input type="hidden" name="record_id" value="{{ record.id }}">{% endif %}
+
+            {# Primary column as the big title #}
+            {% if primary %}
+            <input type="text" name="col_{{ primary.id }}" value="{{ title_val }}"
+                   placeholder="{{ primary.name }}" class="editor-title-input" id="primary-input">
+            {% endif %}
+
+            <div class="rec-fields">
+            {% for c in columns %}
+                {% if not loop.first %}
+                {% set raw = cells.get(c.id, '') %}
+                <div class="rec-field">
+                    <label class="rec-label">{{ c.name }} <span class="rec-type-tag">{{ c.type }}</span></label>
+                    <div class="rec-value">
+                        {% if c.type == 'longtext' %}
+                            <div class="rich-editor" data-col="{{ c.id }}">{{ raw | safe }}</div>
+                            <input type="hidden" name="col_{{ c.id }}" id="rich-input-{{ c.id }}">
+                        {% elif c.type == 'checkbox' %}
+                            <input type="checkbox" name="col_{{ c.id }}" value="1" {% if raw in ('1','true','True') %}checked{% endif %}>
+                        {% elif c.type == 'select' %}
+                            {% set opts = c.options | from_json %}
+                            <select name="col_{{ c.id }}" class="form-input">
+                                <option value=""></option>
+                                {% for o in opts %}<option value="{{ o }}" {% if raw==o %}selected{% endif %}>{{ o }}</option>{% endfor %}
+                            </select>
+                        {% elif c.type == 'multiselect' %}
+                            {% set opts = c.options | from_json %}
+                            {% set chosen = raw | from_json %}
+                            <div class="ms-options">
+                                {% for o in opts %}
+                                <label class="ms-chip {% if o in chosen %}ms-active{% endif %}">
+                                    <input type="checkbox" name="col_{{ c.id }}" value="{{ o }}" {% if o in chosen %}checked{% endif %}
+                                           onchange="this.parentElement.classList.toggle('ms-active', this.checked)" style="display:none">
+                                    {{ o }}
+                                </label>
+                                {% endfor %}
+                                {% if not opts %}<span class="rec-hint">No options yet — edit this column to add some.</span>{% endif %}
+                            </div>
+                        {% elif c.type == 'link' %}
+                            {% set link_opts = c.options | from_json %}
+                            {% set linked = raw | from_json %}
+                            <div class="link-picker" data-col="{{ c.id }}" data-target="{{ link_opts.target_table_id if link_opts else '' }}">
+                                <div class="link-chips" id="link-chips-{{ c.id }}">
+                                    {% for lid in linked %}
+                                    <span class="chip chip-link" data-id="{{ lid }}">↗ {{ link_display.get(lid, 'Record ' ~ lid) }}
+                                        <button type="button" class="chip-x" onclick="removeLink({{ c.id }}, {{ lid }})">✕</button>
+                                        <input type="hidden" name="col_{{ c.id }}" value="{{ lid }}">
+                                    </span>
+                                    {% endfor %}
+                                </div>
+                                <input type="text" class="form-input link-search" placeholder="🔍 Link a record…"
+                                       oninput="searchLink({{ c.id }}, this.value)" onfocus="searchLink({{ c.id }}, this.value)">
+                                <div class="link-results hidden" id="link-results-{{ c.id }}"></div>
+                            </div>
+                        {% elif c.type == 'date' %}
+                            <input type="date" name="col_{{ c.id }}" value="{{ raw[:10] }}" class="form-input">
+                        {% elif c.type in ('number','currency','percent') %}
+                            <input type="number" step="any" name="col_{{ c.id }}" value="{{ raw }}" class="form-input"
+                                   placeholder="{% if c.type=='currency' %}0.00{% elif c.type=='percent' %}0{% endif %}">
+                        {% elif c.type == 'email' %}
+                            <input type="email" name="col_{{ c.id }}" value="{{ raw }}" class="form-input">
+                        {% elif c.type == 'url' %}
+                            <input type="url" name="col_{{ c.id }}" value="{{ raw }}" class="form-input">
+                        {% elif c.type == 'phone' %}
+                            <input type="tel" name="col_{{ c.id }}" value="{{ raw }}" class="form-input">
+                        {% else %}
+                            <input type="text" name="col_{{ c.id }}" value="{{ raw }}" class="form-input">
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+            {% endfor %}
+            </div>
+        </form>
+    </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
+<script>
+var richEditors = [];
+document.querySelectorAll('.rich-editor').forEach(function(div){
+    var colId = div.dataset.col;
+    var q = new Quill(div, { theme: 'snow', modules: { toolbar: false } });
+    richEditors.push({col: colId, quill: q});
+    setupNoteLink(q);
+});
+
+// On submit, dump each Quill's HTML into its hidden input
+document.getElementById('record-form').addEventListener('submit', function(){
+    richEditors.forEach(function(re){
+        document.getElementById('rich-input-'+re.col).value = re.quill.root.innerHTML;
+    });
+});
+
+// ── Link picker ───────────────────────────────────────────────
+function searchLink(colId, q){
+    var picker = document.querySelector('.link-picker[data-col="'+colId+'"]');
+    var target = picker.dataset.target;
+    if (!target){ return; }
+    fetch('/api/records/search?table_id='+target+'&q='+encodeURIComponent(q))
+        .then(function(r){return r.json();})
+        .then(function(items){
+            var box = document.getElementById('link-results-'+colId);
+            var existing = Array.from(picker.querySelectorAll('.chip-link')).map(function(c){return c.dataset.id;});
+            var filtered = items.filter(function(it){ return existing.indexOf(String(it.id))===-1; });
+            if (!filtered.length){ box.classList.add('hidden'); return; }
+            box.innerHTML = filtered.map(function(it){
+                return '<div class="link-result" onclick="addLink('+colId+','+it.id+',\''+escapeJs(it.label)+'\')">'+escapeHtml(it.label)+'</div>';
+            }).join('');
+            box.classList.remove('hidden');
+        });
+}
+function addLink(colId, id, label){
+    var chips = document.getElementById('link-chips-'+colId);
+    var span = document.createElement('span');
+    span.className = 'chip chip-link';
+    span.dataset.id = id;
+    span.innerHTML = '↗ '+escapeHtml(label)+' <button type="button" class="chip-x" onclick="removeLink('+colId+','+id+')">✕</button><input type="hidden" name="col_'+colId+'" value="'+id+'">';
+    chips.appendChild(span);
+    document.getElementById('link-results-'+colId).classList.add('hidden');
+    var picker = document.querySelector('.link-picker[data-col="'+colId+'"]');
+    picker.querySelector('.link-search').value = '';
+}
+function removeLink(colId, id){
+    var chips = document.getElementById('link-chips-'+colId);
+    var chip = chips.querySelector('.chip-link[data-id="'+id+'"]');
+    if (chip) chip.remove();
+}
+
+// ── [[ note linking inside rich text ─────────────────────────
+function setupNoteLink(quill){
+    var dd = document.createElement('div');
+    dd.className = 'note-link-dropdown hidden';
+    document.body.appendChild(dd);
+    var mode=false, start=-1, query='';
+    quill.on('text-change', function(){
+        var sel = quill.getSelection(); if(!sel) return;
+        var text = quill.getText(0, sel.index);
+        var idx = text.lastIndexOf('[[');
+        if (idx!==-1 && sel.index-idx<=50){
+            mode=true; start=idx; query=text.slice(idx+2);
+            fetch('/api/records/search?table_id={{ table.id }}&q='+encodeURIComponent(query))
+                .then(function(r){return r.json();})
+                .then(function(items){
+                    if(!items.length){ dd.classList.add('hidden'); return; }
+                    var b = quill.getBounds(sel.index); var er = quill.root.getBoundingClientRect();
+                    dd.style.left=(er.left+b.left)+'px'; dd.style.top=(er.top+window.scrollY+b.bottom+4)+'px';
+                    dd.innerHTML = items.map(function(it,i){ return '<div class="nld-item'+(i===0?' nld-active':'')+'" data-id="'+it.id+'" data-label="'+escapeHtml(it.label)+'">'+escapeHtml(it.label)+'</div>'; }).join('');
+                    dd.querySelectorAll('.nld-item').forEach(function(el){ el.onmousedown=function(e){e.preventDefault(); insert(el.dataset.id, el.dataset.label);}; });
+                    dd.classList.remove('hidden');
+                });
+        } else { dd.classList.add('hidden'); mode=false; }
+    });
+    quill.root.addEventListener('keydown', function(e){
+        if(!mode) return;
+        var items = dd.querySelectorAll('.nld-item'); var act = dd.querySelector('.nld-active');
+        if(e.key==='ArrowDown'){ e.preventDefault(); var n=act?act.nextElementSibling:items[0]; if(n){if(act)act.classList.remove('nld-active'); n.classList.add('nld-active');} }
+        else if(e.key==='ArrowUp'){ e.preventDefault(); var p=act?act.previousElementSibling:items[items.length-1]; if(p){if(act)act.classList.remove('nld-active'); p.classList.add('nld-active');} }
+        else if(e.key==='Enter' && act){ e.preventDefault(); insert(act.dataset.id, act.dataset.label); }
+        else if(e.key==='Escape'){ dd.classList.add('hidden'); mode=false; }
+    });
+    function insert(id, label){
+        var sel = quill.getSelection();
+        var len = (sel?sel.index:start+2+query.length)-start;
+        quill.deleteText(start, len);
+        quill.insertText(start, label, 'link', '/record/'+id);
+        quill.insertText(start+label.length, ' ');
+        quill.setSelection(start+label.length+1);
+        dd.classList.add('hidden'); mode=false;
+    }
+}
+
+// ── Autosave ──────────────────────────────────────────────────
+{% if record %}
+var status = document.getElementById('autosave-status');
+function gatherCells(){
+    var cells = {};
+    document.querySelectorAll('#record-form [name^="col_"]').forEach(function(el){
+        var cid = el.name.replace('col_','');
+        if (el.type==='checkbox' && el.closest('.ms-chip')===null){ cells[cid] = el.checked?'1':'0'; }
+    });
+    richEditors.forEach(function(re){ cells[re.col] = re.quill.root.innerHTML; });
+    var pi = document.getElementById('primary-input'); if(pi){ cells[pi.name.replace('col_','')] = pi.value; }
+    return cells;
+}
+function autosave(){
+    status.textContent='Saving…'; status.className='autosave-status saving';
+    fetch('/record/{{ record.id }}/autosave', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({cells: gatherCells()})})
+        .then(function(r){return r.json();}).then(function(d){ status.textContent=d.ok?'Saved':'Error'; status.className='autosave-status '+(d.ok?'saved':'error'); })
+        .catch(function(){ status.textContent='Error'; status.className='autosave-status error'; });
+}
+setInterval(autosave, 30000);
+{% endif %}
+
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+function escapeJs(s){ return String(s).replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
+
+document.addEventListener('click', function(e){
+    if(!e.target.closest('.link-picker')){ document.querySelectorAll('.link-results').forEach(function(b){b.classList.add('hidden');}); }
+});
+</script>
+{% endblock %}

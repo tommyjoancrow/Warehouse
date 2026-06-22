@@ -5,33 +5,34 @@
 <div class="view-header">
     <div class="view-header-left">
         <h1 class="view-title">🗑 Trash</h1>
-        <span class="view-count">{{ notes|length }} items</span>
+        <span class="view-subtitle">Records are permanently deleted after 30 days</span>
     </div>
 </div>
 
-<div class="trash-list">
-    {% for note in notes %}
-    <div class="trash-row">
-        <div class="trash-info">
-            <div class="trash-title">{{ note.title }}</div>
-            <div class="trash-meta">Deleted {{ note.deleted_at }}</div>
-        </div>
-        <div class="trash-actions">
-            <form method="post" action="/note/{{ note.id }}/restore" style="display:inline">
-                <button class="btn-outline btn-sm">Restore</button>
-            </form>
-            <form method="post" action="/note/{{ note.id }}/delete-permanent" style="display:inline"
-                  onsubmit="return confirm('Permanently delete this note? This cannot be undone.')">
-                <button class="btn-danger-outline btn-sm">Delete Forever</button>
-            </form>
-        </div>
-    </div>
-    {% endfor %}
-    {% if not notes %}
-    <div class="empty-state">
-        <div class="empty-icon">🗑</div>
-        <p>Trash is empty.</p>
-    </div>
+<div class="table-wrap">
+    {% if items %}
+    <table class="data-table">
+        <thead><tr><th>Record</th><th>Table</th><th>Deleted</th><th></th></tr></thead>
+        <tbody>
+            {% for it in items %}
+            <tr>
+                <td>{{ it.label }}</td>
+                <td>{{ it.table_icon }} {{ it.table_name }}</td>
+                <td>{{ it.deleted_at }}</td>
+                <td class="td-actions">
+                    <form method="post" action="/record/{{ it.id }}/restore" style="display:inline">
+                        <button class="btn-card-edit">Restore</button>
+                    </form>
+                    <form method="post" action="/record/{{ it.id }}/purge" style="display:inline" onsubmit="return confirm('Permanently delete? This cannot be undone.')">
+                        <button class="btn-card-delete">Delete forever</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state"><div class="empty-icon">🗑</div><p>Trash is empty.</p></div>
     {% endif %}
 </div>
 

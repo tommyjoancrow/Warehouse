@@ -2058,3 +2058,142 @@ kbd {
     text-overflow: ellipsis;
 }
 .nld-item:hover, .nld-item.nld-active { background: var(--green-light); color: var(--green-dark); }
+
+/* ════════════════════════════════════════════════════════════════
+   TABLES MODEL  (grid / card / calendar / record editor)
+   ════════════════════════════════════════════════════════════════ */
+
+.view-subtitle { font-size: 13px; color: var(--text-muted); margin-left: 10px; }
+
+/* view-type switch */
+.vt-switch { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.vt-btn {
+    background: none; border: none; padding: 6px 12px; font-size: 13px;
+    color: var(--text-muted); cursor: pointer; border-right: 1px solid var(--border);
+}
+.vt-btn:last-child { border-right: none; }
+.vt-btn:hover { background: var(--green-hover); }
+.vt-active { background: var(--green-light); color: var(--green-dark); font-weight: 600; }
+
+/* columns panel */
+.col-toggle-row {
+    display: flex; align-items: center; gap: 8px; padding: 5px 4px;
+    font-size: 13px; cursor: pointer;
+}
+.col-toggle-row:hover { background: var(--green-hover); border-radius: 4px; }
+.col-type-dot {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; border-radius: 4px; background: var(--bg);
+    border: 1px solid var(--border); font-size: 11px; flex-shrink: 0;
+}
+
+/* ── DATA TABLE (grid) ──────────────────────────────────────── */
+.table-wrap { overflow-x: auto; padding-bottom: 40px; }
+.data-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.data-table th, .data-table td {
+    border: 1px solid var(--border); padding: 0; text-align: left; vertical-align: top;
+}
+.data-table thead th {
+    background: var(--bg-subtle, #f7f7f5); position: sticky; top: 0; z-index: 5;
+    font-weight: 600; color: var(--text); white-space: nowrap;
+}
+.th-inner { display: flex; flex-direction: column; padding: 7px 10px; gap: 1px; }
+.th-label { cursor: pointer; }
+.th-label:hover { color: var(--green); text-decoration: underline; }
+.th-type { font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .4px; }
+.th-check, .td-check { width: 34px; text-align: center !important; padding: 6px !important; vertical-align: middle !important; }
+.th-addcol, .td-addcol { width: 40px; background: var(--bg-subtle, #f7f7f5); }
+.addcol-btn {
+    width: 100%; background: none; border: none; cursor: pointer; font-size: 16px;
+    color: var(--text-muted); padding: 6px;
+}
+.addcol-btn:hover { background: var(--green-light); color: var(--green); }
+
+.data-cell { padding: 7px 10px; cursor: pointer; max-width: 320px; }
+.data-cell:hover { background: var(--green-hover); }
+.data-cell a { color: var(--green); }
+.inline-edit-input {
+    width: 100%; border: 1px solid var(--green); border-radius: 3px; padding: 4px 6px;
+    font-size: 13px; outline: none; font-family: inherit;
+}
+.data-table tbody tr:hover { background: rgba(0,0,0,0.015); }
+
+.grid-add-row {
+    display: block; width: 100%; text-align: left; padding: 8px 12px; margin-top: -1px;
+    background: none; border: 1px dashed var(--border); color: var(--text-muted);
+    cursor: pointer; font-size: 13px;
+}
+.grid-add-row:hover { background: var(--green-hover); color: var(--green); border-color: var(--green); }
+.empty-state-inline { padding: 24px; color: var(--text-muted); font-size: 13px; }
+
+/* chips */
+.chip {
+    display: inline-block; padding: 1px 9px; margin: 1px 3px 1px 0; border-radius: 99px;
+    font-size: 12px; background: var(--bg); border: 1px solid var(--border); white-space: nowrap;
+}
+.chip-select { background: var(--green-light); border-color: var(--green); color: var(--green-dark); }
+.chip-link { background: #eef4ff; border-color: #b9d0ff; color: #2456b8; }
+.chip-x { background: none; border: none; cursor: pointer; color: inherit; opacity: .5; margin-left: 3px; padding: 0; font-size: 10px; }
+.chip-x:hover { opacity: 1; }
+
+/* ── CARD VIEW ──────────────────────────────────────────────── */
+.card-fields { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.card-field { display: flex; gap: 8px; font-size: 12px; }
+.card-field-label { color: var(--text-faint); min-width: 90px; flex-shrink: 0; }
+.card-field-val { color: var(--text); }
+
+/* ── CALENDAR ───────────────────────────────────────────────── */
+.cal-wrap { padding: 4px 0 40px; }
+.cal-header { display: flex; align-items: center; justify-content: center; gap: 18px; margin-bottom: 12px; }
+.cal-month { font-size: 16px; font-weight: 700; min-width: 160px; text-align: center; }
+.cal-nav { font-size: 22px; text-decoration: none; color: var(--text-muted); padding: 0 8px; border-radius: 6px; }
+.cal-nav:hover { background: var(--green-light); color: var(--green); }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); }
+.cal-dayname { background: var(--bg-subtle, #f7f7f5); padding: 6px; text-align: center; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-faint); }
+.cal-day { background: var(--bg); min-height: 96px; padding: 4px; }
+.cal-out { background: #fafafa; opacity: .55; }
+.cal-today { background: var(--green-hover); }
+.cal-day-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; }
+.cal-day-num { font-size: 12px; color: var(--text-muted); font-weight: 600; }
+.cal-today .cal-day-num { background: var(--green); color: #fff; border-radius: 50%; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; }
+.cal-add-btn { opacity: 0; text-decoration: none; color: var(--text-muted); font-size: 15px; padding: 0 4px; border-radius: 4px; }
+.cal-day:hover .cal-add-btn { opacity: 1; }
+.cal-add-btn:hover { background: var(--green-light); color: var(--green); }
+.cal-event {
+    display: block; background: var(--green-light); color: var(--green-dark); border-radius: 4px;
+    padding: 2px 6px; margin-bottom: 2px; font-size: 11px; text-decoration: none;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cal-event:hover { background: var(--green); color: #fff; }
+
+/* ── RECORD EDITOR ──────────────────────────────────────────── */
+.editor-scroll-single { flex: 1; overflow-y: auto; padding: 24px 32px 60px; max-width: 760px; width: 100%; margin: 0 auto; }
+.rec-fields { display: flex; flex-direction: column; gap: 2px; margin-top: 18px; }
+.rec-field { display: flex; gap: 16px; padding: 8px 6px; border-radius: 6px; align-items: flex-start; }
+.rec-field:hover { background: var(--green-hover); }
+.rec-label { min-width: 160px; flex-shrink: 0; font-size: 13px; font-weight: 600; color: var(--text-muted); padding-top: 6px; display: flex; flex-direction: column; gap: 2px; }
+.rec-type-tag { font-size: 10px; font-weight: 400; color: var(--text-faint); text-transform: uppercase; letter-spacing: .4px; }
+.rec-value { flex: 1; min-width: 0; }
+.rec-hint { font-size: 12px; color: var(--text-faint); font-style: italic; }
+.rec-value .form-input { width: 100%; }
+.rec-value .rich-editor { border: 1px solid var(--border); border-radius: 6px; min-height: 120px; }
+
+/* multiselect chips in editor */
+.ms-options { display: flex; flex-wrap: wrap; gap: 5px; }
+.ms-chip { display: inline-flex; align-items: center; padding: 3px 11px; border-radius: 99px; font-size: 12px; background: var(--bg); border: 1px solid var(--border); cursor: pointer; user-select: none; color: var(--text-muted); }
+.ms-chip:hover { border-color: var(--green); color: var(--green); }
+.ms-active { background: var(--green-light) !important; border-color: var(--green) !important; color: var(--green-dark) !important; }
+
+/* link picker */
+.link-picker { position: relative; }
+.link-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.link-search { width: 100%; }
+.link-results {
+    position: absolute; z-index: 50; left: 0; right: 0; top: 100%; margin-top: 2px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 18px rgba(0,0,0,.1); max-height: 220px; overflow-y: auto;
+}
+.link-result { padding: 8px 12px; font-size: 13px; cursor: pointer; }
+.link-result:hover { background: var(--green-light); color: var(--green-dark); }
+
+.edit-col-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

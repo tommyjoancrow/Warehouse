@@ -1,1 +1,3 @@
 notes.db
+__pycache__/
+*.pyc

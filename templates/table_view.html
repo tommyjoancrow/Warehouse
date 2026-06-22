@@ -1,0 +1,545 @@
+{% extends "layout.html" %}
+{% block title %}{{ page_title }}{% endblock %}
+{% block content %}
+
+{% if not table %}
+<div class="empty-state">
+    <div class="empty-icon">🗂</div>
+    <p>No tables yet.</p>
+    <button class="btn-primary" onclick="openModal('modal-add-table')">Create your first table</button>
+</div>
+{% else %}
+
+<div class="view-header">
+    <div class="view-header-left">
+        <h1 class="view-title">{{ table.icon }} {{ page_title }}</h1>
+        {% if view %}<span class="view-subtitle">in {{ table.name }}</span>{% endif %}
+    </div>
+    <div class="view-header-right">
+        <a href="/record/new?table_id={{ table.id }}" class="btn-primary">+ New record</a>
+    </div>
+</div>
+
+<!-- TOOLBAR -->
+<div class="at-toolbar">
+    <form method="get" id="filter-form" action="{{ request.path }}">
+        <input type="hidden" name="vt" value="{{ view_type }}" id="vt-input">
+        <input type="hidden" name="sorts" id="sorts-input" value="{{ sorts | tojson }}">
+        <input type="hidden" name="filters" id="filters-input" value="{{ filters | tojson }}">
+        <input type="hidden" name="logic" id="logic-input" value="{{ filter_logic }}">
+        <input type="hidden" name="hidden" id="hidden-input" value="{{ hidden | tojson }}">
+
+        <div class="at-toolbar-row">
+            <div class="at-search-wrap">
+                <span class="at-search-icon">🔍</span>
+                <input type="text" name="search" value="{{ search }}" placeholder="Search this table…" class="at-search-input" id="at-search-input">
+                {% if search %}<button type="button" class="at-search-clear" onclick="clearSearch()">✕</button>{% endif %}
+            </div>
+
+            <div class="at-toolbar-divider"></div>
+
+            <!-- view type switch -->
+            <div class="vt-switch">
+                <button type="button" class="vt-btn {% if view_type=='grid' %}vt-active{% endif %}" onclick="setViewType('grid')">▦ Grid</button>
+                <button type="button" class="vt-btn {% if view_type=='card' %}vt-active{% endif %}" onclick="setViewType('card')">🃏 Cards</button>
+                <button type="button" class="vt-btn {% if view_type=='calendar' %}vt-active{% endif %}" onclick="setViewType('calendar')">📅 Calendar</button>
+            </div>
+
+            <div class="at-toolbar-divider"></div>
+
+            {% set active_count = sorts|length + filters|length %}
+            <button type="button" class="at-btn {% if active_count>0 %}at-btn-active{% endif %}" onclick="toggleSFPanel()">
+                ↕⚙ Sort &amp; filter{% if active_count>0 %} <span class="at-badge">{{ active_count }}</span>{% endif %}
+            </button>
+
+            <button type="button" class="at-btn" onclick="toggleSFPanel('cols')">⚙ Columns</button>
+
+            {% if not view %}
+            <button type="button" class="at-btn" onclick="openSaveView()">💾 Save as view</button>
+            {% else %}
+            <button type="button" class="at-btn" onclick="updateCurrentView()">💾 Update “{{ view.name }}”</button>
+            {% endif %}
+        </div>
+
+        <!-- SORT & FILTER PANEL -->
+        <div class="at-panel sf-panel hidden" id="sf-panel">
+            <div class="sf-section">
+                <div class="sf-section-label">Sort</div>
+                <div id="sort-conditions"></div>
+                <button type="button" class="sf-add-btn" onclick="addSort()">+ Add sort</button>
+            </div>
+            <div class="sf-section">
+                <div class="sf-section-label">
+                    Filter
+                    <select id="filter-logic-select" class="form-input-sm sf-logic-select" onchange="document.getElementById('logic-input').value=this.value">
+                        <option value="AND" {% if filter_logic=='AND' %}selected{% endif %}>match ALL (AND)</option>
+                        <option value="OR" {% if filter_logic=='OR' %}selected{% endif %}>match ANY (OR)</option>
+                    </select>
+                </div>
+                <div id="filter-conditions"></div>
+                <button type="button" class="sf-add-btn" onclick="addFilter()">+ Add filter</button>
+            </div>
+            <div class="sf-panel-footer">
+                <button type="submit" class="at-btn at-btn-primary">Apply</button>
+                <a href="{{ request.path }}" class="at-btn at-btn-clear">Clear</a>
+            </div>
+        </div>
+
+        <!-- COLUMNS PANEL -->
+        <div class="at-panel sf-panel hidden" id="cols-panel">
+            <div class="sf-section">
+                <div class="sf-section-label">Show / hide columns</div>
+                {% for c in columns %}
+                <label class="col-toggle-row">
+                    <input type="checkbox" class="col-vis-cb" value="{{ c.id }}" {% if c.id not in hidden %}checked{% endif %} onchange="toggleColumnVis()">
+                    <span class="col-type-dot">{{ {'text':'A','longtext':'¶','number':'#','date':'📅','checkbox':'☑','select':'▼','multiselect':'�<','url':'🔗','email':'@','phone':'☎','currency':'$','percent':'%','link':'↗'}.get(c.type,'A') }}</span>
+                    {{ c.name }}
+                </label>
+                {% endfor %}
+            </div>
+            <div class="sf-section">
+                <button type="button" class="sf-add-btn" onclick="openModal('modal-add-column')">+ Add column</button>
+            </div>
+        </div>
+    </form>
+</div>
+
+<!-- BULK BAR -->
+<div class="bulk-bar hidden" id="bulk-bar">
+    <span class="bulk-count" id="bulk-count">0 selected</span>
+    <div class="bulk-bar-actions">
+        <button type="button" class="at-btn" onclick="bulkDelete()">🗑 Delete</button>
+        <button type="button" class="at-btn" onclick="clearSelection()">Clear selection</button>
+    </div>
+</div>
+
+{# ── GRID VIEW ─────────────────────────────────────────────── #}
+{% if view_type == 'grid' %}
+<div class="table-wrap">
+    <table class="data-table" id="data-table">
+        <thead>
+            <tr>
+                <th class="th-check"><input type="checkbox" id="select-all-cb" onchange="toggleSelectAll(this.checked)"></th>
+                {% for c in visible_columns %}
+                <th data-col-id="{{ c.id }}">
+                    <div class="th-inner">
+                        <span class="th-label" onclick="openColumnEdit({{ c.id }})">{{ c.name }}</span>
+                        <span class="th-type">{{ c.type }}</span>
+                    </div>
+                </th>
+                {% endfor %}
+                <th class="th-addcol"><button type="button" class="addcol-btn" onclick="openModal('modal-add-column')" title="Add column">+</button></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for rec in records %}
+            <tr data-record-id="{{ rec.id }}">
+                <td class="td-check"><input type="checkbox" class="row-cb" value="{{ rec.id }}" onchange="onRowCheck()"></td>
+                {% for c in visible_columns %}
+                <td class="data-cell" data-record-id="{{ rec.id }}" data-col-id="{{ c.id }}" data-type="{{ c.type }}"
+                    {% if c.type not in ('longtext','multiselect','link') %}onclick="startInlineEdit(this)"{% else %}onclick="window.location='/record/{{ rec.id }}'"{% endif %}>
+                    {% set d = rec.display[c.id] %}
+                    {% if c.type == 'checkbox' %}
+                        <input type="checkbox" {% if d=='✓' %}checked{% endif %} onclick="event.stopPropagation(); toggleCheckbox({{ rec.id }},{{ c.id }},this.checked)">
+                    {% elif c.type == 'multiselect' %}
+                        {% for v in d %}<span class="chip">{{ v }}</span>{% endfor %}
+                    {% elif c.type == 'link' %}
+                        {% for v in d %}<span class="chip chip-link">↗ {{ v }}</span>{% endfor %}
+                    {% elif c.type == 'select' and d %}
+                        <span class="chip chip-select">{{ d }}</span>
+                    {% elif c.type == 'url' and d %}
+                        <a href="{{ d }}" target="_blank" onclick="event.stopPropagation()">{{ d }}</a>
+                    {% else %}
+                        {{ d }}
+                    {% endif %}
+                </td>
+                {% endfor %}
+                <td class="td-addcol"></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <button type="button" class="grid-add-row" onclick="addRow()">+ New record</button>
+    {% if not records %}
+    <div class="empty-state-inline">No records match. <a href="{{ request.path }}">Clear filters</a> or <a href="/record/new?table_id={{ table.id }}">add one</a>.</div>
+    {% endif %}
+</div>
+
+{# ── CARD VIEW ─────────────────────────────────────────────── #}
+{% elif view_type == 'card' %}
+<div class="card-grid">
+    {% for rec in records %}
+    <a href="/record/{{ rec.id }}" class="card">
+        <div class="card-top">
+            <div class="card-title">{{ rec.display[primary.id] if primary else ('Record ' ~ rec.id) }}</div>
+        </div>
+        <div class="card-fields">
+            {% for c in visible_columns %}
+                {% if not loop.first %}
+                {% set d = rec.display[c.id] %}
+                {% if d %}
+                <div class="card-field">
+                    <span class="card-field-label">{{ c.name }}</span>
+                    <span class="card-field-val">
+                        {% if c.type == 'checkbox' %}{{ '✓' if d=='✓' else '—' }}
+                        {% elif c.type in ('multiselect','link') %}{% for v in d %}<span class="chip">{{ v }}</span>{% endfor %}
+                        {% elif c.type == 'select' and d %}<span class="chip chip-select">{{ d }}</span>
+                        {% else %}{{ d }}{% endif %}
+                    </span>
+                </div>
+                {% endif %}
+                {% endif %}
+            {% endfor %}
+        </div>
+    </a>
+    {% endfor %}
+    {% if not records %}<div class="empty-state-inline">No records.</div>{% endif %}
+</div>
+
+{# ── CALENDAR VIEW ─────────────────────────────────────────── #}
+{% elif view_type == 'calendar' %}
+    {% if not date_col_id %}
+    <div class="empty-state"><div class="empty-icon">📅</div><p>This table has no date column to anchor a calendar on.</p>
+    <button class="btn-primary" onclick="openModal('modal-add-column')">Add a date column</button></div>
+    {% else %}
+    <div class="cal-wrap">
+        <div class="cal-header">
+            <a href="?vt=calendar&m={{ cal_prev }}" class="cal-nav">‹</a>
+            <span class="cal-month">{{ cal_month_label }}</span>
+            <a href="?vt=calendar&m={{ cal_next }}" class="cal-nav">›</a>
+        </div>
+        <div class="cal-grid">
+            {% for dn in ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'] %}
+            <div class="cal-dayname">{{ dn }}</div>
+            {% endfor %}
+            {% for week in cal_weeks %}
+                {% for day in week %}
+                <div class="cal-day {% if not day.in_month %}cal-out{% endif %} {% if day.is_today %}cal-today{% endif %}">
+                    <div class="cal-day-top">
+                        <span class="cal-day-num">{{ day.day }}</span>
+                        <a href="/record/new?table_id={{ table.id }}" class="cal-add-btn" title="New record">+</a>
+                    </div>
+                    {% for r in day.records %}
+                    <a href="/record/{{ r.id }}" class="cal-event">{{ r.label }}</a>
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+{% endif %}
+
+{% endif %}{# table exists #}
+
+<!-- ADD COLUMN MODAL -->
+<div class="modal hidden" id="modal-add-column">
+    <div class="modal-header"><h3>Add Column</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
+    <form action="/api/tables/{{ table.id }}/columns" method="post" id="add-col-form">
+        <div class="form-group">
+            <label>Column name</label>
+            <input type="text" name="name" placeholder="e.g. Priority, Email, Due Date" class="form-input" autofocus>
+        </div>
+        <div class="form-group">
+            <label>Type</label>
+            <select name="type" class="form-input" id="add-col-type" onchange="onColTypeChange('add')">
+                {% for key, label in column_types %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="form-group hidden" id="add-col-options-wrap">
+            <label>Options (comma-separated)</label>
+            <input type="text" name="options" placeholder="Low, Medium, High" class="form-input">
+        </div>
+        <div class="form-group hidden" id="add-col-link-wrap">
+            <label>Links to table</label>
+            <select name="target_table_id" class="form-input">
+                {% for t in all_tables %}<option value="{{ t.id }}">{{ t.icon }} {{ t.name }}</option>{% endfor %}
+            </select>
+        </div>
+        <button type="submit" class="btn-primary">Add Column</button>
+    </form>
+</div>
+
+<!-- EDIT COLUMN MODAL -->
+<div class="modal hidden" id="modal-edit-column">
+    <div class="modal-header"><h3>Edit Column</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
+    <form action="" method="post" id="edit-col-form">
+        <div class="form-group">
+            <label>Column name</label>
+            <input type="text" name="name" class="form-input" id="edit-col-name">
+        </div>
+        <div class="form-group">
+            <label>Type</label>
+            <select name="type" class="form-input" id="edit-col-type" onchange="onColTypeChange('edit')">
+                {% for key, label in column_types %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="form-group hidden" id="edit-col-options-wrap">
+            <label>Options (comma-separated)</label>
+            <input type="text" name="options" class="form-input" id="edit-col-options">
+        </div>
+        <div class="form-group hidden" id="edit-col-link-wrap">
+            <label>Links to table</label>
+            <select name="target_table_id" class="form-input" id="edit-col-target">
+                {% for t in all_tables %}<option value="{{ t.id }}">{{ t.icon }} {{ t.name }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="edit-col-footer">
+            <button type="submit" class="btn-primary">Save</button>
+            <button type="button" class="btn-ghost btn-danger" onclick="deleteColumn()">🗑 Delete column</button>
+        </div>
+    </form>
+</div>
+
+<!-- SAVE VIEW MODAL -->
+<div class="modal hidden" id="modal-save-view">
+    <div class="modal-header"><h3>Save as View</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
+    <form id="save-view-form" onsubmit="return doSaveView(event)">
+        <div class="form-group">
+            <label>View name</label>
+            <input type="text" class="form-input" id="save-view-name" placeholder="e.g. Open high-priority" autofocus>
+        </div>
+        <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px">
+            Saves the current view type, sorts, filters, and hidden columns as a reusable view under <strong>{{ table.name }}</strong>.
+        </p>
+        <button type="submit" class="btn-primary">Create View</button>
+    </form>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── State injected from server ───────────────────────────────
+var TABLE_ID = {{ table.id if table else 'null' }};
+var VIEW_ID = {{ active_view_id if active_view_id else 'null' }};
+var COLUMNS = {{ columns | tojson }};
+var OPS_BY_TYPE = {{ ops_by_type | tojson }};
+var currentSorts = {{ sorts | tojson }};
+var currentFilters = {{ filters | tojson }};
+
+var colById = {};
+COLUMNS.forEach(function(c){ colById[c.id] = c; });
+
+// ── Panels ───────────────────────────────────────────────────
+function toggleSFPanel(which) {
+    var sf = document.getElementById('sf-panel');
+    var cols = document.getElementById('cols-panel');
+    if (which === 'cols') {
+        sf.classList.add('hidden');
+        cols.classList.toggle('hidden');
+    } else {
+        cols.classList.add('hidden');
+        sf.classList.toggle('hidden');
+    }
+}
+function clearSearch(){ document.getElementById('at-search-input').value=''; document.getElementById('filter-form').submit(); }
+function setViewType(vt){ document.getElementById('vt-input').value = vt; document.getElementById('filter-form').submit(); }
+
+// ── Sort rows ─────────────────────────────────────────────────
+function renderSorts() {
+    var box = document.getElementById('sort-conditions');
+    box.innerHTML = '';
+    currentSorts.forEach(function(s, i){
+        var row = document.createElement('div');
+        row.className = 'at-condition-row';
+        row.innerHTML =
+            '<span class="sf-row-icon">↕</span>' +
+            colSelect(s.c, 'updateSort('+i+',\'c\',this.value)') +
+            '<select class="form-input-sm sf-dir-select" onchange="updateSort('+i+',\'d\',this.value)">' +
+                '<option value="asc"'+(s.d==='asc'?' selected':'')+'>A → Z / oldest first</option>' +
+                '<option value="desc"'+(s.d==='desc'?' selected':'')+'>Z → A / newest first</option>' +
+            '</select>' +
+            '<button type="button" class="at-remove-btn" onclick="removeSort('+i+')">✕</button>';
+        box.appendChild(row);
+    });
+}
+function colSelect(selected, onchange) {
+    var html = '<select class="form-input-sm sf-field-select" onchange="'+onchange+'">';
+    COLUMNS.forEach(function(c){
+        html += '<option value="'+c.id+'"'+(String(c.id)===String(selected)?' selected':'')+'>'+escapeHtml(c.name)+'</option>';
+    });
+    return html + '</select>';
+}
+function addSort(){ var c = COLUMNS[0]; if(!c) return; currentSorts.push({c:c.id,d:'asc'}); renderSorts(); syncSorts(); }
+function removeSort(i){ currentSorts.splice(i,1); renderSorts(); syncSorts(); }
+function updateSort(i,k,v){ currentSorts[i][k]=v; syncSorts(); }
+function syncSorts(){ document.getElementById('sorts-input').value = JSON.stringify(currentSorts); }
+
+// ── Filter rows ───────────────────────────────────────────────
+function renderFilters() {
+    var box = document.getElementById('filter-conditions');
+    box.innerHTML = '';
+    currentFilters.forEach(function(f, i){
+        var col = colById[f.c] || COLUMNS[0];
+        var row = document.createElement('div');
+        row.className = 'at-condition-row';
+        row.innerHTML =
+            '<span class="sf-row-icon">⚙</span>' +
+            colSelect(f.c, 'updateFilter('+i+',\'c\',this.value)') +
+            opSelect(col.type, f.op, i) +
+            '<input type="text" class="form-input-sm sf-value-input" value="'+escapeHtml(f.v||'')+'" oninput="updateFilter('+i+',\'v\',this.value)" placeholder="value…">' +
+            '<button type="button" class="at-remove-btn" onclick="removeFilter('+i+')">✕</button>';
+        box.appendChild(row);
+    });
+}
+function opSelect(type, selected, i) {
+    var ops = OPS_BY_TYPE[type] || OPS_BY_TYPE['text'];
+    var html = '<select class="form-input-sm sf-op-select" onchange="updateFilter('+i+',\'op\',this.value)">';
+    ops.forEach(function(o){
+        html += '<option value="'+o[0]+'"'+(o[0]===selected?' selected':'')+'>'+o[1]+'</option>';
+    });
+    return html + '</select>';
+}
+function addFilter(){ var c = COLUMNS[0]; if(!c) return; var ops = OPS_BY_TYPE[c.type]||OPS_BY_TYPE['text']; currentFilters.push({c:c.id,op:ops[0][0],v:''}); renderFilters(); syncFilters(); }
+function removeFilter(i){ currentFilters.splice(i,1); renderFilters(); syncFilters(); }
+function updateFilter(i,k,v){
+    currentFilters[i][k]=v;
+    if (k==='c'){ var col=colById[v]; var ops=OPS_BY_TYPE[col.type]||OPS_BY_TYPE['text']; currentFilters[i].op=ops[0][0]; renderFilters(); }
+    syncFilters();
+}
+function syncFilters(){ document.getElementById('filters-input').value = JSON.stringify(currentFilters); }
+
+renderSorts(); renderFilters();
+
+// ── Column visibility ─────────────────────────────────────────
+function toggleColumnVis(){
+    var hidden = [];
+    document.querySelectorAll('.col-vis-cb').forEach(function(cb){ if(!cb.checked) hidden.push(parseInt(cb.value)); });
+    document.getElementById('hidden-input').value = JSON.stringify(hidden);
+    document.getElementById('filter-form').submit();
+}
+
+// ── Column add/edit ───────────────────────────────────────────
+function onColTypeChange(which){
+    var t = document.getElementById(which+'-col-type').value;
+    document.getElementById(which+'-col-options-wrap').classList.toggle('hidden', !(t==='select'||t==='multiselect'));
+    document.getElementById(which+'-col-link-wrap').classList.toggle('hidden', t!=='link');
+}
+function openColumnEdit(colId){
+    var c = colById[colId];
+    var f = document.getElementById('edit-col-form');
+    f.action = '/api/columns/'+colId+'/update';
+    document.getElementById('edit-col-name').value = c.name;
+    document.getElementById('edit-col-type').value = c.type;
+    var opts = [];
+    try { opts = JSON.parse(c.options || '[]'); } catch(e){}
+    if (c.type==='select'||c.type==='multiselect') document.getElementById('edit-col-options').value = (opts||[]).join(', ');
+    if (c.type==='link' && opts && opts.target_table_id) document.getElementById('edit-col-target').value = opts.target_table_id;
+    f.dataset.colId = colId;
+    onColTypeChange('edit');
+    openModal('modal-edit-column');
+}
+function deleteColumn(){
+    var colId = document.getElementById('edit-col-form').dataset.colId;
+    if (!confirm('Delete this column and all its data?')) return;
+    var f = document.createElement('form');
+    f.method='post'; f.action='/api/columns/'+colId+'/delete';
+    document.body.appendChild(f); f.submit();
+}
+
+// ── Inline editing ────────────────────────────────────────────
+var editing = null;
+function startInlineEdit(td){
+    if (editing) return;
+    var type = td.dataset.type;
+    var rid = td.dataset.recordId, cid = td.dataset.colId;
+    var col = colById[cid];
+    var current = td.textContent.trim();
+    editing = td;
+    var input;
+    if (type==='select'){
+        input = document.createElement('select');
+        var opts = []; try{ opts = JSON.parse(col.options||'[]'); }catch(e){}
+        input.innerHTML = '<option value=""></option>' + opts.map(function(o){return '<option'+(o===current?' selected':'')+'>'+escapeHtml(o)+'</option>';}).join('');
+    } else {
+        input = document.createElement('input');
+        input.type = (type==='date')?'date':(type==='number'||type==='currency'||type==='percent')?'number':'text';
+        if (type==='currency') current = current.replace('$',''); if(type==='percent') current = current.replace('%','');
+        input.value = current;
+    }
+    input.className = 'inline-edit-input';
+    td.textContent = '';
+    td.appendChild(input);
+    input.focus();
+    function commit(){
+        var val = input.value;
+        fetch('/api/cells', {method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({record_id: parseInt(rid), column_id: parseInt(cid), value: val})})
+            .then(function(){ window.location.reload(); });
+    }
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', function(e){
+        if(e.key==='Enter'){ e.preventDefault(); input.blur(); }
+        if(e.key==='Escape'){ editing=null; window.location.reload(); }
+    });
+}
+function toggleCheckbox(rid, cid, checked){
+    fetch('/api/cells', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({record_id: rid, column_id: cid, value: checked?'1':'0'})});
+}
+function addRow(){
+    fetch('/api/records', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({table_id: TABLE_ID})})
+        .then(function(r){return r.json();})
+        .then(function(d){ if(d.ok) window.location='/record/'+d.id; });
+}
+
+// ── Multi-select / bulk ───────────────────────────────────────
+function getSelectedIds(){ return Array.from(document.querySelectorAll('.row-cb:checked')).map(function(cb){return parseInt(cb.value);}); }
+function onRowCheck(){
+    var ids = getSelectedIds();
+    var bar = document.getElementById('bulk-bar');
+    if (ids.length){ bar.classList.remove('hidden'); document.getElementById('bulk-count').textContent = ids.length+' selected'; }
+    else bar.classList.add('hidden');
+    var all = document.getElementById('select-all-cb');
+    var total = document.querySelectorAll('.row-cb').length;
+    if (all){ all.indeterminate = ids.length>0 && ids.length<total; all.checked = ids.length===total && total>0; }
+}
+function toggleSelectAll(checked){ document.querySelectorAll('.row-cb').forEach(function(cb){cb.checked=checked;}); onRowCheck(); }
+function clearSelection(){ document.querySelectorAll('.row-cb').forEach(function(cb){cb.checked=false;}); var a=document.getElementById('select-all-cb'); if(a)a.checked=false; document.getElementById('bulk-bar').classList.add('hidden'); }
+function bulkDelete(){
+    var ids = getSelectedIds();
+    if (!ids.length) return;
+    if (!confirm('Move '+ids.length+' record(s) to trash?')) return;
+    fetch('/api/records/bulk', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({record_ids: ids, action:'delete'})})
+        .then(function(r){return r.json();}).then(function(d){ if(d.ok) window.location.reload(); });
+}
+
+// ── Views ─────────────────────────────────────────────────────
+function openSaveView(){ openModal('modal-save-view'); setTimeout(function(){document.getElementById('save-view-name').focus();},50); }
+function viewPayload(){
+    return {
+        table_id: TABLE_ID,
+        view_type: document.getElementById('vt-input').value,
+        filters: currentFilters,
+        filter_logic: document.getElementById('logic-input').value,
+        sorts: currentSorts,
+        hidden: JSON.parse(document.getElementById('hidden-input').value || '[]')
+    };
+}
+function doSaveView(e){
+    e.preventDefault();
+    var payload = viewPayload();
+    payload.name = document.getElementById('save-view-name').value.trim() || 'New view';
+    fetch('/api/views', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
+        .then(function(r){return r.json();}).then(function(d){ if(d.ok) window.location='/view/'+d.id; });
+    return false;
+}
+function updateCurrentView(){
+    if (!VIEW_ID) return;
+    fetch('/api/views/'+VIEW_ID+'/update', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(viewPayload())})
+        .then(function(r){return r.json();}).then(function(d){ if(d.ok){ var b=event.target; b.textContent='✓ Updated'; setTimeout(function(){window.location.reload();},700); } });
+}
+
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+// close panels/menus on outside click
+document.addEventListener('click', function(e){
+    if (!e.target.closest('.col-menu') && !e.target.closest('.th-label')) {
+        // no-op; reserved
+    }
+});
+</script>
+{% endblock %}

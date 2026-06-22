@@ -2263,3 +2263,51 @@ th:hover .th-insert { opacity: 1; }
 }
 .tag-result { padding: 7px 12px; font-size: 13px; cursor: pointer; }
 .tag-result:hover { background: var(--green-light); color: var(--green-dark); }
+
+/* ── Row expand button ──────────────────────────────────────── */
+.td-check { position: relative; }
+.row-expand {
+    position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+    text-decoration: none; color: var(--text-faint); font-size: 13px; opacity: 0;
+    padding: 2px 4px; border-radius: 4px;
+}
+tr:hover .row-expand { opacity: 1; }
+.row-expand:hover { background: var(--green-light); color: var(--green); }
+
+/* ── Calendar anchor selector ───────────────────────────────── */
+.cal-anchor-wrap { font-size: 12px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 6px; }
+.cal-anchor-wrap select { font-size: 12px; }
+
+/* ── Detail layout settings ─────────────────────────────────── */
+.detail-fields-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; max-height: 320px; overflow-y: auto; }
+.detail-field-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+.detail-field-row:hover { background: var(--green-hover); }
+
+/* ── Record-editor field-edit caret ─────────────────────────── */
+.rec-field-edit {
+    background: none; border: none; cursor: pointer; color: var(--text-faint);
+    font-size: 11px; padding: 0 4px; border-radius: 4px; opacity: 0;
+}
+.rec-field:hover .rec-field-edit { opacity: 1; }
+.rec-field-edit:hover { background: var(--green-light); color: var(--green); }
+
+/* ── Inline cell popover editor ─────────────────────────────── */
+.data-cell.cell-editing { background: var(--bg); box-shadow: inset 0 0 0 2px var(--green); }
+.cell-popover {
+    position: absolute; z-index: 60; margin-top: 2px; min-width: 220px; max-width: 320px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.15); padding: 8px;
+}
+.cp-opt { display: flex; align-items: center; gap: 7px; padding: 5px 6px; font-size: 13px; border-radius: 5px; cursor: pointer; }
+.cp-opt:hover { background: var(--green-hover); }
+.cp-empty { font-size: 12px; color: var(--text-faint); padding: 6px; }
+.cp-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.cp-input { width: 100%; border: 1px solid var(--border); border-radius: 5px; padding: 5px 7px; font-size: 13px; outline: none; }
+.cp-input:focus { border-color: var(--green); }
+.cp-results { max-height: 160px; overflow-y: auto; margin-top: 4px; }
+.cp-result { padding: 6px 8px; font-size: 13px; cursor: pointer; border-radius: 5px; }
+.cp-result:hover { background: var(--green-light); color: var(--green-dark); }
+.cp-actions { margin-top: 8px; text-align: right; }
+.cp-actions button { background: var(--green); color: #fff; border: none; border-radius: 6px; padding: 5px 14px; font-size: 13px; cursor: pointer; }
+.cp-actions button:hover { background: var(--green-dark); }
+.data-cell { position: relative; }

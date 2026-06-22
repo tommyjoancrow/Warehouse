@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS views (
     sorts_json TEXT DEFAULT '[]',
     hidden_columns_json TEXT DEFAULT '[]',
     column_order_json TEXT DEFAULT '[]',
+    detail_fields_json TEXT DEFAULT '[]',
     date_column_id INTEGER DEFAULT NULL,
     position INTEGER DEFAULT 0,
     created_at TEXT NOT NULL
@@ -116,6 +117,8 @@ def init_db():
     view_cols = [r[1] for r in conn.execute("PRAGMA table_info(views)").fetchall()]
     if 'column_order_json' not in view_cols:
         conn.execute("ALTER TABLE views ADD COLUMN column_order_json TEXT DEFAULT '[]'")
+    if 'detail_fields_json' not in view_cols:
+        conn.execute("ALTER TABLE views ADD COLUMN detail_fields_json TEXT DEFAULT '[]'")
     conn.commit()
     # purge trash > 30 days
     cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d %H:%M")
@@ -193,10 +196,8 @@ def seed(conn):
              [{'c':c_name,'d':'asc'}], hide_all_but([c_name,c_status,c_email,c_phone,c_link,c_notes]), 2)
     add_view('Tasks', 'grid', [{'c':c_type,'op':'equals','v':'Task'}],
              [{'c':c_due,'d':'asc'}], hide_all_but([c_name,c_status,c_due,c_pri,c_link]), 3)
-    add_view('Task calendar', 'calendar', [{'c':c_type,'op':'equals','v':'Task'}],
-             [], [], 4, date_col=c_due)
     add_view('Notes', 'grid', [{'c':c_type,'op':'equals','v':'Note'}],
-             [{'c':c_due,'d':'desc'}], hide_all_but([c_name,c_notes,c_due]), 5)
+             [{'c':c_due,'d':'desc'}], hide_all_but([c_name,c_notes,c_due]), 4)
 
     conn.commit()
 
@@ -434,13 +435,18 @@ def inject_sidebar():
 @app.route("/")
 def index():
     conn = get_db()
-    t = conn.execute("SELECT id FROM tables ORDER BY position, id LIMIT 1").fetchone()
+    ws = workspace_table(conn)
+    first_view = None
+    if ws:
+        first_view = conn.execute("SELECT id FROM views WHERE table_id=? ORDER BY position, id LIMIT 1", (ws['id'],)).fetchone()
     conn.close()
-    if not t:
-        return render_template('table_view.html', table=None, columns=[], records=[],
-                               view=None, views=[], view_type='grid', filters=[], filter_logic='AND',
-                               sorts=[], hidden=[], search='', link_names={})
-    return redirect(url_for('table_view', table_id=t['id']))
+    if first_view:
+        return redirect(url_for('view_page', view_id=first_view['id']))
+    if ws:
+        return redirect(url_for('table_view', table_id=ws['id']))
+    return render_template('table_view.html', table=None, columns=[], records=[],
+                           view=None, views=[], view_type='grid', filters=[], filter_logic='AND',
+                           sorts=[], hidden=[], search='', link_names={})
 
 def _render_table(conn, table, view):
     columns = get_columns(conn, table['id'])
@@ -468,17 +474,27 @@ def _render_table(conn, table, view):
             ordered += [c for c in columns if c['id'] not in seen]
     visible_columns = [c for c in ordered if c['id'] not in hidden_set]
     primary = primary_column(columns)
+    # which columns appear in the detail view when opening a record from here
+    detail_field_ids = []
+    if view and view['detail_fields_json']:
+        try:
+            detail_field_ids = json.loads(view['detail_fields_json'])
+        except Exception:
+            detail_field_ids = []
+    date_columns = [c for c in columns if c['type'] == 'date']
     # calendar date column + month grid
     date_col_id = None
     cal_weeks = None
     cal_month_label = None
     cal_prev = cal_next = None
     if vt == 'calendar':
-        if view and view['date_column_id']:
+        req_dc = request.args.get('date_col', type=int)
+        if req_dc:
+            date_col_id = req_dc
+        elif view and view['date_column_id']:
             date_col_id = view['date_column_id']
         else:
-            dc = next((c for c in columns if c['type'] == 'date'), None)
-            date_col_id = dc['id'] if dc else None
+            date_col_id = date_columns[0]['id'] if date_columns else None
         if date_col_id:
             cal_weeks, cal_month_label, cal_prev, cal_next = build_calendar(recs, date_col_id, primary)
     return render_template('table_view.html',
@@ -486,7 +502,8 @@ def _render_table(conn, table, view):
         records=recs, link_names=link_names, primary=primary,
         view=view, views=views, view_type=vt,
         filters=filters, filter_logic=logic, sorts=sorts, hidden=list(hidden_set),
-        search=search, date_col_id=date_col_id,
+        search=search, date_col_id=date_col_id, date_columns=date_columns,
+        detail_field_ids=detail_field_ids,
         cal_weeks=cal_weeks, cal_month_label=cal_month_label, cal_prev=cal_prev, cal_next=cal_next,
         page_title=(view['name'] if view else table['name']),
         active_table_id=table['id'], active_view_id=(view['id'] if view else None))
@@ -574,20 +591,47 @@ def new_record_form():
                         prefill[int(f['c'])] = f['v']
             except Exception:
                 pass
+    detail_cols = detail_columns_for(conn, columns, view_id)
     conn.close()
-    return render_template('record_editor.html', table=dict(table), columns=columns,
-                           record=None, cells=prefill, link_display={},
+    return render_template('record_editor.html', table=dict(table), columns=detail_cols,
+                           record=None, cells=prefill, link_display={}, view_id=view_id,
                            active_table_id=table_id, page_title='New record')
+
+def detail_columns_for(conn, all_columns, view_id):
+    """Columns to show in the detail editor when opened from a given view.
+    Empty/absent detail settings => all columns. Primary (first) always shown."""
+    if not all_columns:
+        return all_columns
+    if not view_id:
+        return all_columns
+    v = conn.execute("SELECT detail_fields_json FROM views WHERE id=?", (view_id,)).fetchone()
+    if not v or not v['detail_fields_json']:
+        return all_columns
+    try:
+        ids = json.loads(v['detail_fields_json'])
+    except Exception:
+        ids = []
+    if not ids:
+        return all_columns
+    id2 = {c['id']: c for c in all_columns}
+    primary = all_columns[0]
+    ordered = [primary]
+    for cid in ids:
+        if cid in id2 and cid != primary['id']:
+            ordered.append(id2[cid])
+    return ordered
 
 @app.route("/record/<int:record_id>")
 def record_detail(record_id):
+    view_id = request.args.get('view', type=int)
     conn = get_db()
     rec = conn.execute("SELECT * FROM records WHERE id=?", (record_id,)).fetchone()
     if not rec:
         conn.close()
         return redirect(url_for('index'))
     table = conn.execute("SELECT * FROM tables WHERE id=?", (rec['table_id'],)).fetchone()
-    columns = get_columns(conn, rec['table_id'])
+    all_columns = get_columns(conn, rec['table_id'])
+    columns = detail_columns_for(conn, all_columns, view_id)
     cells = {}
     for cv in conn.execute("SELECT * FROM cell_values WHERE record_id=?", (record_id,)).fetchall():
         cells[cv['column_id']] = cv['value']
@@ -602,12 +646,14 @@ def record_detail(record_id):
     link_display = primary_values(conn, linked_ids) if linked_ids else {}
     conn.close()
     return render_template('record_editor.html', table=dict(table), columns=columns,
-                           record=dict(rec), cells=cells, link_display=link_display,
+                           record=dict(rec), cells=cells, link_display=link_display, view_id=view_id,
                            active_table_id=rec['table_id'],
                            page_title='Record')
 
-def _save_cells(conn, record_id, columns, form):
+def _save_cells(conn, record_id, columns, form, only_ids=None):
     for c in columns:
+        if only_ids is not None and c['id'] not in only_ids:
+            continue  # field wasn't shown in this editor; leave its value alone
         key = f"col_{c['id']}"
         if c['type'] == 'checkbox':
             val = '1' if form.get(key) else '0'
@@ -626,6 +672,11 @@ def _save_cells(conn, record_id, columns, form):
 def save_record():
     table_id = request.form.get('table_id', type=int)
     record_id = request.form.get('record_id', type=int)
+    view_id = request.form.get('view_id', type=int)
+    only_ids = None
+    cols_field = request.form.get('_cols', '')
+    if cols_field:
+        only_ids = set(int(x) for x in cols_field.split(',') if x.strip().isdigit())
     conn = get_db()
     columns = get_columns(conn, table_id)
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -634,9 +685,11 @@ def save_record():
                                  (table_id, now, now)).lastrowid
     else:
         conn.execute("UPDATE records SET updated_at=? WHERE id=?", (now, record_id))
-    _save_cells(conn, record_id, columns, request.form)
+    _save_cells(conn, record_id, columns, request.form, only_ids=only_ids)
     conn.commit()
     conn.close()
+    if view_id:
+        return redirect(url_for('record_detail', record_id=record_id, view=view_id))
     return redirect(url_for('record_detail', record_id=record_id))
 
 @app.route("/record/<int:record_id>/autosave", methods=["POST"])
@@ -924,6 +977,27 @@ def view_reorder(view_id):
     order = data.get('order', [])
     conn = get_db()
     conn.execute("UPDATE views SET column_order_json=? WHERE id=?", (json.dumps(order), view_id))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/views/<int:view_id>/detail-fields", methods=["POST"])
+def view_detail_fields(view_id):
+    """Save which fields (and order) show in the detail view for this view."""
+    data = request.get_json() or {}
+    conn = get_db()
+    conn.execute("UPDATE views SET detail_fields_json=? WHERE id=?",
+                 (json.dumps(data.get('fields', [])), view_id))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/views/<int:view_id>/set-date-column", methods=["POST"])
+def view_set_date_column(view_id):
+    """Anchor a calendar view on a specific date column."""
+    data = request.get_json() or {}
+    conn = get_db()
+    conn.execute("UPDATE views SET date_column_id=? WHERE id=?", (data.get('date_column_id'), view_id))
     conn.commit()
     conn.close()
     return jsonify({"ok": True})

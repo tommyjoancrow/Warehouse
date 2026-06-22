@@ -43,6 +43,22 @@ tables/columns/records/views model.
 
 ## ✅ Done
 
+- ✅ 2026-06-21 — Sidebar/view cleanup + per-view detail layouts:
+  - Removed the standalone **Calendar** sidebar link and the seeded **Task
+    calendar** view. Calendar is now a view *type* (grid / cards / calendar) that
+    any view can use, with a toolbar selector to **anchor on any date column**.
+  - Fixed the **duplicate "All records"** (removed the hardcoded base-table link;
+    the real "All records" *view* is canonical, and `/` lands there).
+  - Removed field-type labels under grid column headers and in the detail view.
+  - Detail view: each field has a **▾ caret to edit the field** (rename / type /
+    options / delete) inline.
+  - **Per-view detail layout** ("Detail layout" toolbar button): choose which
+    fields show when opening a record *from that view*. Records opened from a
+    view carry `?view=` so the right layout applies. Saving only writes the
+    fields actually shown (hidden fields are preserved).
+  - **Inline editing for all field types in the grid**, including tag,
+    multi-select, and link (popover editors); only rich-text still opens the
+    record. Added a row **⤢ expand** button to open the full record.
 - ✅ 2026-06-21 — Grid column improvements: **drag to reorder columns**
   (per-view order), **click a header to sort** by it, **caret menu** per column
   (Edit field / Hide field / Delete field), **"+" between columns** to insert a

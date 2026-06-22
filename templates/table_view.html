@@ -6,9 +6,10 @@
 <div class="empty-state">
     <div class="empty-icon">🗂</div>
     <p>No tables yet.</p>
-    <button class="btn-primary" onclick="openModal('modal-add-table')">Create your first table</button>
 </div>
 {% else %}
+
+{% set rec_suffix = ('?view=' ~ view.id) if view else '' %}
 
 <div class="view-header">
     <div class="view-header-left">
@@ -53,6 +54,20 @@
             </button>
 
             <button type="button" class="at-btn" onclick="toggleSFPanel('cols')">⚙ Columns</button>
+
+            {% if view %}
+            <button type="button" class="at-btn" onclick="openDetailSettings()">🗂 Detail layout</button>
+            {% endif %}
+
+            {% if view_type == 'calendar' and date_columns %}
+            <span class="cal-anchor-wrap">📅 Anchor on
+                <select class="form-input-sm" onchange="setDateCol(this.value)">
+                    {% for dc in date_columns %}
+                    <option value="{{ dc.id }}" {% if dc.id == date_col_id %}selected{% endif %}>{{ dc.name }}</option>
+                    {% endfor %}
+                </select>
+            </span>
+            {% endif %}
 
             {% if not view %}
             <button type="button" class="at-btn" onclick="openSaveView()">💾 Save as view</button>
@@ -147,10 +162,14 @@
         <tbody>
             {% for rec in records %}
             <tr data-record-id="{{ rec.id }}">
-                <td class="td-check"><input type="checkbox" class="row-cb" value="{{ rec.id }}" onchange="onRowCheck()"></td>
+                <td class="td-check">
+                    <input type="checkbox" class="row-cb" value="{{ rec.id }}" onchange="onRowCheck()">
+                    <a href="/record/{{ rec.id }}{{ rec_suffix }}" class="row-expand" title="Open record">⤢</a>
+                </td>
                 {% for c in visible_columns %}
                 <td class="data-cell" data-record-id="{{ rec.id }}" data-col-id="{{ c.id }}" data-type="{{ c.type }}"
-                    {% if c.type not in ('longtext','multiselect','tag','link') %}onclick="startInlineEdit(this)"{% else %}onclick="window.location='/record/{{ rec.id }}'"{% endif %}>
+                    data-options='{{ c.options }}' data-raw='{{ rec.cells.get(c.id, "") }}'
+                    {% if c.type == 'longtext' %}onclick="window.location='/record/{{ rec.id }}{{ rec_suffix }}'"{% else %}onclick="startInlineEdit(this)"{% endif %}>
                     {% set d = rec.display[c.id] %}
                     {% if c.type == 'checkbox' %}
                         <input type="checkbox" {% if d=='✓' %}checked{% endif %} onclick="event.stopPropagation(); toggleCheckbox({{ rec.id }},{{ c.id }},this.checked)">
@@ -181,7 +200,7 @@
 {% elif view_type == 'card' %}
 <div class="card-grid">
     {% for rec in records %}
-    <a href="/record/{{ rec.id }}" class="card">
+    <a href="/record/{{ rec.id }}{{ rec_suffix }}" class="card">
         <div class="card-top">
             <div class="card-title">{{ rec.display[primary.id] if primary else ('Record ' ~ rec.id) }}</div>
         </div>
@@ -232,7 +251,7 @@
                         <a href="/record/new?table_id={{ table.id }}{% if view %}&view_id={{ view.id }}{% endif %}" class="cal-add-btn" title="New record">+</a>
                     </div>
                     {% for r in day.records %}
-                    <a href="/record/{{ r.id }}" class="cal-event">{{ r.label }}</a>
+                    <a href="/record/{{ r.id }}{{ rec_suffix }}" class="cal-event">{{ r.label }}</a>
                     {% endfor %}
                 </div>
                 {% endfor %}
@@ -309,6 +328,18 @@
     </form>
 </div>
 
+{% if view %}
+<!-- DETAIL LAYOUT MODAL -->
+<div class="modal hidden" id="modal-detail-settings">
+    <div class="modal-header"><h3>Detail layout — “{{ view.name }}”</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
+    <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px">
+        Choose which fields show (and in what order) when you open a record from this view. The first field (the record title) is always shown.
+    </p>
+    <div id="detail-fields-list" class="detail-fields-list"></div>
+    <button type="button" class="btn-primary" onclick="saveDetailFields()">Save layout</button>
+</div>
+{% endif %}
+
 <!-- SAVE VIEW MODAL -->
 <div class="modal hidden" id="modal-save-view">
     <div class="modal-header"><h3>Save as View</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
@@ -337,9 +368,44 @@ var HIDDEN_IDS = {{ hidden | tojson }};
 var OPS_BY_TYPE = {{ ops_by_type | tojson }};
 var currentSorts = {{ sorts | tojson }};
 var currentFilters = {{ filters | tojson }};
+var DETAIL_FIELDS = {{ detail_field_ids | tojson if detail_field_ids is defined else '[]' }};
 
 var colById = {};
 COLUMNS.forEach(function(c){ colById[c.id] = c; });
+
+// ── Calendar anchor ───────────────────────────────────────────
+function setDateCol(colId){
+    if (VIEW_ID){
+        fetch('/api/views/'+VIEW_ID+'/set-date-column', {method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({date_column_id: parseInt(colId)})}).then(function(){ window.location.reload(); });
+    } else {
+        window.location = '?vt=calendar&date_col=' + colId;
+    }
+}
+
+// ── Detail layout settings ────────────────────────────────────
+function openDetailSettings(){
+    var box = document.getElementById('detail-fields-list');
+    var chosen = DETAIL_FIELDS.length ? DETAIL_FIELDS : COLUMNS.map(function(c){return c.id;});
+    // primary always first & always on
+    var primaryId = COLUMNS.length ? COLUMNS[0].id : null;
+    var rows = COLUMNS.map(function(c){
+        var isPrimary = c.id === primaryId;
+        var on = isPrimary || chosen.indexOf(c.id) !== -1;
+        return '<label class="detail-field-row">' +
+            '<input type="checkbox" class="detail-field-cb" value="'+c.id+'" '+(on?'checked':'')+(isPrimary?' disabled':'')+'> '+
+            escapeHtml(c.name) + (isPrimary?' <span class="eff-type">title</span>':'') +
+            '</label>';
+    }).join('');
+    box.innerHTML = rows;
+    openModal('modal-detail-settings');
+}
+function saveDetailFields(){
+    var ids = Array.from(document.querySelectorAll('.detail-field-cb'))
+        .filter(function(cb){ return cb.checked; }).map(function(cb){ return parseInt(cb.value); });
+    fetch('/api/views/'+VIEW_ID+'/detail-fields', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({fields: ids})}).then(function(){ closeModals(); });
+}
 
 // ── Panels ───────────────────────────────────────────────────
 function toggleSFPanel(which) {
@@ -535,11 +601,16 @@ document.querySelectorAll('#data-table thead th[data-col-id]').forEach(function(
 
 // ── Inline editing ────────────────────────────────────────────
 var editing = null;
+var currentPopover = null;
 function startInlineEdit(td){
     if (editing) return;
     var type = td.dataset.type;
     var rid = td.dataset.recordId, cid = td.dataset.colId;
     var col = colById[cid];
+    if (type==='tag' || type==='multiselect' || type==='link'){
+        openCellPopover(td, rid, cid, type, col);
+        return;
+    }
     var current = td.textContent.trim();
     editing = td;
     var input;
@@ -572,6 +643,95 @@ function startInlineEdit(td){
 function toggleCheckbox(rid, cid, checked){
     fetch('/api/cells', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({record_id: rid, column_id: cid, value: checked?'1':'0'})});
+}
+
+// ── Inline popover editors (tag / multiselect / link) ─────────
+function openCellPopover(td, rid, cid, type, col){
+    editing = td;
+    var raw = td.dataset.raw || '';
+    var values = []; try { values = JSON.parse(raw || '[]'); } catch(e){ values = []; }
+    var pop = document.createElement('div');
+    pop.className = 'cell-popover';
+    pop.dataset.record = rid; pop.dataset.col = cid; pop.dataset.type = type;
+    pop.onclick = function(e){ e.stopPropagation(); };
+
+    if (type === 'multiselect'){
+        var opts = []; try { opts = JSON.parse(col.options || '[]'); } catch(e){}
+        pop.innerHTML = (opts.length ? opts.map(function(o){
+            var on = values.indexOf(o) !== -1;
+            return '<label class="cp-opt"><input type="checkbox" value="'+escapeHtml(o)+'" '+(on?'checked':'')+'> '+escapeHtml(o)+'</label>';
+        }).join('') : '<div class="cp-empty">No options — edit the field to add some.</div>')
+        + '<div class="cp-actions"><button type="button" onclick="commitPopover()">Save</button></div>';
+        pop._collect = function(){ return JSON.stringify(Array.from(pop.querySelectorAll('input:checked')).map(function(i){return i.value;})); };
+
+    } else if (type === 'tag'){
+        pop.innerHTML = '<div class="cp-chips"></div>' +
+            '<input type="text" class="cp-input" placeholder="Add tag, comma to separate">' +
+            '<div class="cp-results"></div>' +
+            '<div class="cp-actions"><button type="button" onclick="commitPopover()">Save</button></div>';
+        var chipsEl = pop.querySelector('.cp-chips');
+        values.forEach(function(v){ addPopChip(chipsEl, v, v); });
+        var inp = pop.querySelector('.cp-input');
+        inp.addEventListener('keydown', function(e){
+            if (e.key===',' || e.key==='Enter'){ e.preventDefault(); if(inp.value.trim()){ addPopChip(chipsEl, inp.value.replace(/,/g,'').trim(), null); inp.value=''; pop.querySelector('.cp-results').innerHTML=''; } }
+        });
+        inp.addEventListener('input', function(){
+            fetch('/api/columns/'+cid+'/tag-options?q='+encodeURIComponent(inp.value.trim()))
+                .then(function(r){return r.json();}).then(function(o){
+                    var chosen = Array.from(chipsEl.querySelectorAll('[data-val]')).map(function(x){return x.dataset.val.toLowerCase();});
+                    var box = pop.querySelector('.cp-results');
+                    var avail = o.filter(function(x){return chosen.indexOf(x.toLowerCase())===-1;});
+                    box.innerHTML = avail.map(function(x){return '<div class="cp-result">'+escapeHtml(x)+'</div>';}).join('');
+                    box.querySelectorAll('.cp-result').forEach(function(el,i){ el.onclick=function(){ addPopChip(chipsEl, avail[i], null); inp.value=''; box.innerHTML=''; }; });
+                });
+        });
+        pop._collect = function(){ return JSON.stringify(Array.from(chipsEl.querySelectorAll('[data-val]')).map(function(x){return x.dataset.val;})); };
+
+    } else if (type === 'link'){
+        pop.innerHTML = '<div class="cp-chips"></div>' +
+            '<input type="text" class="cp-input" placeholder="🔍 Link a record…">' +
+            '<div class="cp-results"></div>' +
+            '<div class="cp-actions"><button type="button" onclick="commitPopover()">Save</button></div>';
+        var chipsEl2 = pop.querySelector('.cp-chips');
+        // current chips: read labels from the cell's chip spans, ids from values
+        var labels = Array.from(td.querySelectorAll('.chip-link')).map(function(s){return s.textContent.replace('↗','').trim();});
+        values.forEach(function(id, i){ addPopChip(chipsEl2, labels[i] || ('Record '+id), id, true); });
+        var inp2 = pop.querySelector('.cp-input');
+        var target = TABLE_ID;
+        try { var o = JSON.parse(col.options||'{}'); if(o.target_table_id) target = o.target_table_id; } catch(e){}
+        inp2.addEventListener('input', function(){
+            fetch('/api/records/search?table_id='+target+'&q='+encodeURIComponent(inp2.value.trim()))
+                .then(function(r){return r.json();}).then(function(items){
+                    var chosen = Array.from(chipsEl2.querySelectorAll('[data-id]')).map(function(x){return x.dataset.id;});
+                    var box = pop.querySelector('.cp-results');
+                    var avail = items.filter(function(x){return chosen.indexOf(String(x.id))===-1;});
+                    box.innerHTML = avail.map(function(x){return '<div class="cp-result" data-id="'+x.id+'">'+escapeHtml(x.label)+'</div>';}).join('');
+                    box.querySelectorAll('.cp-result').forEach(function(el){ el.onclick=function(){ addPopChip(chipsEl2, el.textContent, el.dataset.id, true); inp2.value=''; box.innerHTML=''; }; });
+                });
+        });
+        pop._collect = function(){ return JSON.stringify(Array.from(chipsEl2.querySelectorAll('[data-id]')).map(function(x){return parseInt(x.dataset.id);})); };
+    }
+    td.classList.add('cell-editing');
+    td.innerHTML = '';
+    td.appendChild(pop);
+    currentPopover = pop;
+    var f = pop.querySelector('.cp-input'); if (f) f.focus();
+}
+function addPopChip(container, label, val, isLink){
+    var span = document.createElement('span');
+    span.className = 'chip' + (isLink?' chip-link':'');
+    if (isLink) span.dataset.id = val; else span.dataset.val = (val!==null?val:label);
+    span.innerHTML = (isLink?'↗ ':'') + escapeHtml(label) + ' <button type="button" class="chip-x">✕</button>';
+    span.querySelector('.chip-x').onclick = function(){ span.remove(); };
+    container.appendChild(span);
+}
+function commitPopover(){
+    if (!currentPopover) return;
+    var val = currentPopover._collect();
+    var rid = currentPopover.dataset.record, cid = currentPopover.dataset.col;
+    fetch('/api/cells', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({record_id: parseInt(rid), column_id: parseInt(cid), value: val})})
+        .then(function(){ window.location.reload(); });
 }
 function addRow(){
     fetch('/api/records', {method:'POST', headers:{'Content-Type':'application/json'},
@@ -634,6 +794,10 @@ function escapeHtml(s){ return String(s).replace(/[&<>"']/g, function(c){ return
 document.addEventListener('click', function(e){
     if (!e.target.closest('.col-menu') && !e.target.closest('.th-caret')) {
         document.querySelectorAll('.col-menu').forEach(function(m){ m.classList.add('hidden'); });
+    }
+    // cancel an open inline popover when clicking elsewhere
+    if (currentPopover && !e.target.closest('.cell-popover') && !e.target.closest('.data-cell')) {
+        window.location.reload();
     }
 });
 </script>

@@ -2228,6 +2228,7 @@ kbd {
 /* ── Grid header: sort / caret menu / insert / drag ─────────── */
 #data-table thead th[data-col-id] { position: relative; cursor: grab; }
 #data-table thead th[data-col-id]:active { cursor: grabbing; }
+#data-table thead th[data-col-id]:hover { z-index: 15; } /* lift above siblings so th-insert is fully visible */
 .th-inner { display: flex; align-items: center; justify-content: flex-start; gap: 2px; padding: 7px 10px; flex-wrap: nowrap; }
 .th-label { cursor: pointer; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .th-label:hover { color: var(--green); }
@@ -2254,8 +2255,8 @@ th:hover .th-insert, .th-insert:hover { opacity: 1; }
 .th-drop { box-shadow: inset 3px 0 0 var(--green); }
 
 .col-menu {
-    position: absolute; top: 100%; left: 6px; z-index: 30; min-width: 170px;
-    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    position: fixed; z-index: 1000; min-width: 170px;
+    background: var(--white); border: 1px solid var(--border); border-radius: 8px;
     box-shadow: 0 4px 18px rgba(0,0,0,.12); padding: 4px; font-weight: 400;
 }
 .col-menu-item { padding: 7px 10px; font-size: 13px; cursor: pointer; border-radius: 5px; color: var(--text); }
@@ -2358,6 +2359,35 @@ tr:hover .row-expand { opacity: 1; }
 
 /* ── Bulk edit inline ───────────────────────────────────────── */
 .bulk-edit-wrap { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ── Filter groups ───────────────────────────────────────────── */
+.filter-group {
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; background: var(--white);
+}
+.fg-header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 8px; font-size: 12px; color: var(--text-muted);
+}
+.fg-logic-select { width: auto !important; }
+.fg-remove { margin-left: auto; font-size: 12px; color: var(--text-faint); }
+.fg-separator {
+    text-align: center; font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .6px; color: var(--text-faint);
+    padding: 4px 0; position: relative;
+}
+.fg-separator::before, .fg-separator::after {
+    content: ''; position: absolute; top: 50%; width: 38%; height: 1px;
+    background: var(--border);
+}
+.fg-separator::before { left: 0; }
+.fg-separator::after { right: 0; }
+.sf-add-group-btn {
+    background: none; border: 1px dashed var(--border); border-radius: 6px;
+    color: var(--text-faint); font-size: 12px; padding: 5px 12px; cursor: pointer;
+    width: 100%; text-align: center; margin-top: 6px;
+}
+.sf-add-group-btn:hover { border-color: var(--green); color: var(--green); background: var(--green-hover); }
 
 /* ── Archived rows / calendar drop ──────────────────────────── */
 .row-archived { opacity: .5; }

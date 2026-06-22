@@ -41,6 +41,15 @@ tables/columns/records/views model.
 
 ## ✅ Done
 
+- ✅ 2026-06-21 — Bug fixes + filter group redesign:
+  - **Plus sign clipping**: hovering a column header now raises its z-index above siblings, so the `+` insert button is fully visible and not half-covered by the next column.
+  - **Add existing field**: was silently broken — `window.location.reload()` re-applied old `?hidden=…` URL params, overriding the saved change. Now updates the hidden-input and submits the form instead.
+  - **Column dropdown cut-off**: `.data-table { overflow: hidden }` was clipping absolutely-positioned children. Switched col-menus to `position: fixed` with JS-calculated coordinates so they always clear the table and appear in full.
+  - **Edit field in dropdown**: was always there but hidden by the cut-off; now fully visible.
+  - **Grouped filter conditions**: filters are now organized into named groups. Each group has its own AND/OR logic (rules within that group). Groups are OR'd together. Replace the old global AND/OR toggle. Old saved flat filters are auto-converted to a single group on load.
+  - **`hideField`**: same URL-param bug fixed — now submits the form rather than reloading.
+  - Backend `apply_view` and `parse_params` updated to handle grouped filter format; backward-compatible with old flat format.
+
 - ✅ 2026-06-21 — View header & toolbar cleanup:
   - Removed **"in Workspace"** subtitle from the view header.
   - Added a **▾ dropdown** next to the view title with: **Save changes to view**, **Save as new view**, and **Detail layout**. Replaces the old "Update X" toolbar button.

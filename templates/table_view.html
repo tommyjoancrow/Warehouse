@@ -60,7 +60,9 @@
 
             <div class="at-toolbar-divider"></div>
 
-            {% set active_count = sorts|length + filters|length %}
+            {% set ns = namespace(fcount=0) %}
+            {% for g in filters %}{% set ns.fcount = ns.fcount + (g.rules | default([]) | length) %}{% endfor %}
+            {% set active_count = sorts|length + ns.fcount %}
             <button type="button" class="at-btn {% if active_count>0 %}at-btn-active{% endif %}" onclick="toggleSFPanel()">
                 ↕⚙ Sort &amp; filter{% if active_count>0 %} <span class="at-badge">{{ active_count }}</span>{% endif %}
             </button>
@@ -97,15 +99,9 @@
                 <button type="button" class="sf-add-btn" onclick="addSort()">+ Add sort</button>
             </div>
             <div class="sf-section">
-                <div class="sf-section-label">
-                    Filter
-                    <select id="filter-logic-select" class="form-input-sm sf-logic-select" onchange="document.getElementById('logic-input').value=this.value">
-                        <option value="AND" {% if filter_logic=='AND' %}selected{% endif %}>match ALL (AND)</option>
-                        <option value="OR" {% if filter_logic=='OR' %}selected{% endif %}>match ANY (OR)</option>
-                    </select>
-                </div>
+                <div class="sf-section-label">Filter</div>
                 <div id="filter-conditions"></div>
-                <button type="button" class="sf-add-btn" onclick="addFilter()">+ Add filter</button>
+                <button type="button" class="sf-add-group-btn" onclick="addFilterGroup()">+ Add filter group</button>
             </div>
             <div class="sf-panel-footer">
                 <button type="submit" class="at-btn at-btn-primary">Apply</button>
@@ -562,41 +558,92 @@ function removeSort(i){ currentSorts.splice(i,1); renderSorts(); syncSorts(); }
 function updateSort(i,k,v){ currentSorts[i][k]=v; syncSorts(); }
 function syncSorts(){ document.getElementById('sorts-input').value = JSON.stringify(currentSorts); }
 
-// ── Filter rows ───────────────────────────────────────────────
-function renderFilters() {
+// ── Filter groups ─────────────────────────────────────────────
+// Normalize currentFilters (from server) → array of groups [{logic, rules:[]}]
+var currentFilterGroups = (function(){
+    var raw = currentFilters;
+    if (!raw || !raw.length) return [{logic:'AND', rules:[]}];
+    if (raw[0] && raw[0].rules !== undefined) return raw; // already grouped
+    // old flat format → single group
+    return [{logic:'AND', rules: raw}];
+})();
+
+function renderFilterGroups(){
     var box = document.getElementById('filter-conditions');
     box.innerHTML = '';
-    currentFilters.forEach(function(f, i){
-        var col = colById[f.c] || COLUMNS[0];
-        var row = document.createElement('div');
-        row.className = 'at-condition-row';
-        row.innerHTML =
-            '<span class="sf-row-icon">⚙</span>' +
-            colSelect(f.c, 'updateFilter('+i+',\'c\',this.value)') +
-            opSelect(col.type, f.op, i) +
-            '<input type="text" class="form-input-sm sf-value-input" value="'+escapeHtml(f.v||'')+'" oninput="updateFilter('+i+',\'v\',this.value)" placeholder="value…">' +
-            '<button type="button" class="at-remove-btn" onclick="removeFilter('+i+')">✕</button>';
-        box.appendChild(row);
+    currentFilterGroups.forEach(function(group, gi){
+        if (gi > 0){
+            var sep = document.createElement('div');
+            sep.className = 'fg-separator';
+            sep.textContent = 'OR';
+            box.appendChild(sep);
+        }
+        var grp = document.createElement('div');
+        grp.className = 'filter-group';
+        var hdr = '<div class="fg-header">' +
+            '<span>Match</span>' +
+            '<select class="form-input-sm fg-logic-select" onchange="setGroupLogic('+gi+',this.value)">' +
+                '<option value="AND"'+(group.logic==='AND'?' selected':'')+'>all (AND)</option>' +
+                '<option value="OR"'+(group.logic==='OR'?' selected':'')+'>any (OR)</option>' +
+            '</select>' +
+            '<span style="flex:1"></span>' +
+            (currentFilterGroups.length > 1 ? '<button type="button" class="at-remove-btn fg-remove" onclick="removeFilterGroup('+gi+')">Remove group</button>' : '') +
+        '</div>';
+        var rules = (group.rules||[]).map(function(rule, ri){
+            var col = colById[rule.c] || COLUMNS[0];
+            var ops = OPS_BY_TYPE[(col||{}).type||'text'] || OPS_BY_TYPE['text'];
+            var opHtml = '<select class="form-input-sm sf-op-select" onchange="updateFilterRule('+gi+','+ri+',\'op\',this.value)">';
+            ops.forEach(function(o){ opHtml += '<option value="'+o[0]+'"'+(o[0]===rule.op?' selected':'')+'>'+o[1]+'</option>'; });
+            opHtml += '</select>';
+            return '<div class="at-condition-row">' +
+                '<span class="sf-row-icon">⚙</span>' +
+                colSelect(rule.c, 'updateFilterRule('+gi+','+ri+',\'c\',this.value)') +
+                opHtml +
+                '<input type="text" class="form-input-sm sf-value-input" value="'+escapeHtml(rule.v||'')+'" oninput="updateFilterRule('+gi+','+ri+',\'v\',this.value)" placeholder="value…">' +
+                '<button type="button" class="at-remove-btn" onclick="removeFilterRule('+gi+','+ri+')">✕</button>' +
+            '</div>';
+        }).join('');
+        var addBtn = '<button type="button" class="sf-add-btn" style="margin-top:4px" onclick="addFilterRule('+gi+')">+ Add rule</button>';
+        grp.innerHTML = hdr + rules + addBtn;
+        box.appendChild(grp);
     });
 }
-function opSelect(type, selected, i) {
-    var ops = OPS_BY_TYPE[type] || OPS_BY_TYPE['text'];
-    var html = '<select class="form-input-sm sf-op-select" onchange="updateFilter('+i+',\'op\',this.value)">';
-    ops.forEach(function(o){
-        html += '<option value="'+o[0]+'"'+(o[0]===selected?' selected':'')+'>'+o[1]+'</option>';
-    });
-    return html + '</select>';
+function addFilterRule(gi){
+    var c = COLUMNS[0]; if(!c) return;
+    var ops = OPS_BY_TYPE[c.type]||OPS_BY_TYPE['text'];
+    currentFilterGroups[gi].rules.push({c:c.id, op:ops[0][0], v:''});
+    renderFilterGroups(); syncFilterGroups();
 }
-function addFilter(){ var c = COLUMNS[0]; if(!c) return; var ops = OPS_BY_TYPE[c.type]||OPS_BY_TYPE['text']; currentFilters.push({c:c.id,op:ops[0][0],v:''}); renderFilters(); syncFilters(); }
-function removeFilter(i){ currentFilters.splice(i,1); renderFilters(); syncFilters(); }
-function updateFilter(i,k,v){
-    currentFilters[i][k]=v;
-    if (k==='c'){ var col=colById[v]; var ops=OPS_BY_TYPE[col.type]||OPS_BY_TYPE['text']; currentFilters[i].op=ops[0][0]; renderFilters(); }
-    syncFilters();
+function removeFilterRule(gi, ri){
+    currentFilterGroups[gi].rules.splice(ri,1);
+    if (!currentFilterGroups[gi].rules.length && currentFilterGroups.length > 1)
+        currentFilterGroups.splice(gi,1);
+    renderFilterGroups(); syncFilterGroups();
 }
-function syncFilters(){ document.getElementById('filters-input').value = JSON.stringify(currentFilters); }
+function updateFilterRule(gi, ri, k, v){
+    currentFilterGroups[gi].rules[ri][k] = v;
+    if (k==='c'){
+        var col = colById[v];
+        if (col){ var ops = OPS_BY_TYPE[col.type]||OPS_BY_TYPE['text']; currentFilterGroups[gi].rules[ri].op = ops[0][0]; renderFilterGroups(); }
+    }
+    syncFilterGroups();
+}
+function setGroupLogic(gi, logic){ currentFilterGroups[gi].logic = logic; syncFilterGroups(); }
+function removeFilterGroup(gi){ currentFilterGroups.splice(gi,1); renderFilterGroups(); syncFilterGroups(); }
+function addFilterGroup(){
+    var c = COLUMNS[0]; if(!c) return;
+    var ops = OPS_BY_TYPE[c.type]||OPS_BY_TYPE['text'];
+    currentFilterGroups.push({logic:'AND', rules:[{c:c.id, op:ops[0][0], v:''}]});
+    renderFilterGroups(); syncFilterGroups();
+    // open the panel if it's hidden
+    document.getElementById('sf-panel').classList.remove('hidden');
+}
+function syncFilterGroups(){
+    var groups = currentFilterGroups.filter(function(g){ return g.rules && g.rules.length > 0; });
+    document.getElementById('filters-input').value = JSON.stringify(groups);
+}
 
-renderSorts(); renderFilters();
+renderSorts(); renderFilterGroups();
 
 // ── Header: sort + field menu ─────────────────────────────────
 function sortByCol(colId){
@@ -614,12 +661,25 @@ function openColMenu(e, colId){
     var menu = document.getElementById('colmenu-'+colId);
     var wasHidden = menu.classList.contains('hidden');
     document.querySelectorAll('.col-menu').forEach(function(m){ m.classList.add('hidden'); });
-    if (wasHidden) menu.classList.remove('hidden');
+    if (wasHidden){
+        var btn = e.currentTarget;
+        var rect = btn.getBoundingClientRect();
+        menu.style.top = rect.bottom + 4 + 'px';
+        menu.style.left = rect.left + 'px';
+        menu.classList.remove('hidden');
+    }
 }
 function hideField(colId){
     if (!VIEW_ID) return;
     fetch('/api/views/'+VIEW_ID+'/hide-field', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({column_id: colId})}).then(function(){ window.location.reload(); });
+        body: JSON.stringify({column_id: colId})})
+        .then(function(r){ return r.json(); })
+        .then(function(){
+            var h = JSON.parse(document.getElementById('hidden-input').value || '[]');
+            if (h.indexOf(colId) === -1) h.push(colId);
+            document.getElementById('hidden-input').value = JSON.stringify(h);
+            document.getElementById('filter-form').submit();
+        });
 }
 function deleteColumnById(colId){
     if (!confirm('Delete this field and all its data, everywhere? This cannot be undone.')) return;
@@ -656,7 +716,15 @@ function addExistingField(colId){
     var after = document.getElementById('add-col-after').value;
     fetch('/api/views/'+VIEW_ID+'/show-field', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({column_id: colId, after_column_id: after ? parseInt(after) : null})})
-        .then(function(){ window.location.reload(); });
+        .then(function(r){ return r.json(); })
+        .then(function(){
+            // Remove from hidden-input so the URL param doesn't override the saved change
+            var h = JSON.parse(document.getElementById('hidden-input').value || '[]');
+            h = h.filter(function(x){ return x !== colId; });
+            document.getElementById('hidden-input').value = JSON.stringify(h);
+            closeModals();
+            document.getElementById('filter-form').submit();
+        });
 }
 
 // ── Column add/edit ───────────────────────────────────────────
@@ -923,11 +991,12 @@ function applyBulkEdit(){
 // ── Views ─────────────────────────────────────────────────────
 function openSaveView(){ openModal('modal-save-view'); setTimeout(function(){document.getElementById('save-view-name').focus();},50); }
 function viewPayload(){
+    var groups = currentFilterGroups.filter(function(g){ return g.rules && g.rules.length > 0; });
     return {
         table_id: TABLE_ID,
         view_type: document.getElementById('vt-input').value,
-        filters: currentFilters,
-        filter_logic: document.getElementById('logic-input').value,
+        filters: groups,
+        filter_logic: 'AND',
         sorts: currentSorts,
         hidden: JSON.parse(document.getElementById('hidden-input').value || '[]')
     };

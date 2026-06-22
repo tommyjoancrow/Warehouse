@@ -337,19 +337,41 @@ def apply_view(recs, columns, filters, filter_logic, sorts, search):
                     return True
             return False
         recs = [r for r in recs if matches_search(r)]
-    # filters
+    # filters — grouped format [{logic, rules:[{c,op,v}]}] groups OR'd; flat format fallback
     if filters:
+        is_grouped = isinstance(filters[0], dict) and 'rules' in filters[0]
         def passes(rec):
-            results = []
-            for f in filters:
-                col = col_by_id.get(int(f.get('c'))) if f.get('c') else None
-                if not col:
-                    continue
-                raw = rec['cells'].get(col['id'], '')
-                results.append(cell_match(col['type'], raw, f.get('op','contains'), f.get('v','')))
-            if not results:
-                return True
-            return all(results) if filter_logic == 'AND' else any(results)
+            if is_grouped:
+                # Groups are OR'd together; rules within each group use group logic
+                for group in filters:
+                    rules = group.get('rules') or []
+                    if not rules:
+                        continue
+                    logic = group.get('logic', 'AND')
+                    results = []
+                    for rule in rules:
+                        col = col_by_id.get(int(rule['c'])) if rule.get('c') else None
+                        if not col:
+                            continue
+                        raw = rec['cells'].get(col['id'], '')
+                        results.append(cell_match(col['type'], raw, rule.get('op','contains'), rule.get('v','')))
+                    if results:
+                        group_pass = all(results) if logic == 'AND' else any(results)
+                        if group_pass:
+                            return True
+                return False
+            else:
+                # Old flat format
+                results = []
+                for f in filters:
+                    col = col_by_id.get(int(f.get('c'))) if f.get('c') else None
+                    if not col:
+                        continue
+                    raw = rec['cells'].get(col['id'], '')
+                    results.append(cell_match(col['type'], raw, f.get('op','contains'), f.get('v','')))
+                if not results:
+                    return True
+                return all(results) if filter_logic == 'AND' else any(results)
         recs = [r for r in recs if passes(r)]
     # sorts (apply last-to-first for stable multi-sort)
     for s in reversed(sorts or []):
@@ -376,8 +398,13 @@ def parse_params(view=None):
         except Exception:
             return fallback
     vt = request.args.get('vt') or (view['view_type'] if view else 'grid')
-    filters = getj('filters', json.loads(view['filters_json']) if view else [])
+    raw_filters = getj('filters', json.loads(view['filters_json']) if view else [])
     logic = request.args.get('logic') or (view['filter_logic'] if view else 'AND')
+    # Normalize to grouped format [{logic, rules:[]}]
+    if raw_filters and isinstance(raw_filters[0], dict) and 'rules' not in raw_filters[0]:
+        filters = [{'logic': logic, 'rules': raw_filters}]
+    else:
+        filters = raw_filters
     sorts = getj('sorts', json.loads(view['sorts_json']) if view else [])
     hidden = getj('hidden', json.loads(view['hidden_columns_json']) if view else [])
     search = request.args.get('search', '')

@@ -1,0 +1,104 @@
+{% extends "layout.html" %}
+{% block title %}Calendar{% endblock %}
+{% block content %}
+
+<div class="view-header">
+    <div class="view-header-left">
+        <h1 class="view-title">📅 Calendar</h1>
+    </div>
+    <div class="view-header-right">
+        <a href="/note/new?is_task=1" class="btn-primary btn-sm">+ New Task</a>
+    </div>
+</div>
+
+<div class="calendar-nav">
+    <a href="/calendar?month={{ prev_month }}&year={{ prev_year }}" class="btn-outline">← Prev</a>
+    <h2 class="calendar-month-title">{{ month_name }}</h2>
+    <a href="/calendar?month={{ next_month }}&year={{ next_year }}" class="btn-outline">Next →</a>
+</div>
+
+<div class="calendar-grid" id="calendar-grid">
+    <div class="cal-day-header">Sun</div>
+    <div class="cal-day-header">Mon</div>
+    <div class="cal-day-header">Tue</div>
+    <div class="cal-day-header">Wed</div>
+    <div class="cal-day-header">Thu</div>
+    <div class="cal-day-header">Fri</div>
+    <div class="cal-day-header">Sat</div>
+
+    {% for week in grid %}
+    {% for day in week %}
+    {% if day == 0 %}
+    <div class="cal-cell cal-cell-empty"></div>
+    {% else %}
+    {% set date_str = '%04d-%02d-%02d' | format(year, month, day) %}
+    {% set day_tasks = tasks_by_date.get(date_str, []) %}
+    <div class="cal-cell {% if date_str == today %}cal-today{% endif %}"
+         data-date="{{ date_str }}"
+         ondragover="event.preventDefault(); this.classList.add('cal-drag-over')"
+         ondragleave="this.classList.remove('cal-drag-over')"
+         ondrop="dropTask(event, '{{ date_str }}')">
+        <div class="cal-day-top">
+            <span class="cal-day-num {% if date_str == today %}cal-today-num{% endif %}">{{ day }}</span>
+            <a href="/note/new?is_task=1&due_date={{ date_str }}" class="cal-add-btn" title="Add task on this day">+</a>
+        </div>
+        {% for task in day_tasks %}
+        <a href="/note/{{ task.id }}" class="cal-task"
+           draggable="true"
+           data-note-id="{{ task.id }}"
+           ondragstart="dragStart(event, {{ task.id }})">{{ task.title }}</a>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endfor %}
+    {% endfor %}
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+var draggingId = null;
+
+function dragStart(e, noteId) {
+    draggingId = noteId;
+    e.dataTransfer.effectAllowed = 'move';
+    e.target.classList.add('cal-task-dragging');
+}
+
+function dropTask(e, dateStr) {
+    e.preventDefault();
+    e.currentTarget.classList.remove('cal-drag-over');
+    if (!draggingId) return;
+
+    var noteId = draggingId;
+    draggingId = null;
+
+    // Move the element in the DOM immediately for responsiveness
+    var taskEl = document.querySelector('[data-note-id="' + noteId + '"]');
+    var targetCell = e.currentTarget;
+    if (taskEl) {
+        taskEl.classList.remove('cal-task-dragging');
+        targetCell.appendChild(taskEl);
+    }
+
+    // Persist to server
+    fetch('/api/notes/' + noteId + '/set-due-date', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({due_date: dateStr})
+    }).catch(function() {
+        // If it fails, reload to restore correct state
+        window.location.reload();
+    });
+}
+
+document.addEventListener('dragend', function(e) {
+    if (e.target.classList.contains('cal-task')) {
+        e.target.classList.remove('cal-task-dragging');
+    }
+    document.querySelectorAll('.cal-drag-over').forEach(function(el) {
+        el.classList.remove('cal-drag-over');
+    });
+});
+</script>
+{% endblock %}

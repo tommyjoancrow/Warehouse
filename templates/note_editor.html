@@ -1,0 +1,440 @@
+{% extends "layout.html" %}
+{% block title %}{{ note.title if note else 'New Note' }}{% endblock %}
+{% block content %}
+
+{% set mode = detail_view_mode if detail_view_mode is defined else 'body' %}
+
+<div class="editor-shell editor-mode-{{ mode }}">
+
+    <!-- HEADER -->
+    <div class="editor-header">
+        <div class="editor-header-left">
+            <a href="{{ '/folder/' + folder.id|string if folder else '/' }}" class="btn-back">← {{ folder.name if folder else 'Back' }}</a>
+            {% if folder %}
+            <span class="editor-mode-badge" onclick="toggleEditorMode()" title="Click to switch layout">
+                {{ '📖 Body focus' if mode == 'body' else '📋 Data focus' }}
+            </span>
+            {% endif %}
+        </div>
+        <div class="editor-header-right">
+            {% if note %}
+            <span id="autosave-status" class="autosave-status"></span>
+            {% if note.is_archived %}
+            <form method="post" action="/note/{{ note.id }}/archive" style="display:inline">
+                <button class="btn-outline btn-sm">Unarchive</button>
+            </form>
+            {% else %}
+            <form method="post" action="/note/{{ note.id }}/archive" style="display:inline">
+                <button class="btn-ghost btn-sm">Archive</button>
+            </form>
+            {% endif %}
+            <form method="post" action="/note/{{ note.id }}/delete" style="display:inline" onsubmit="return confirm('Move to trash?')">
+                <button class="btn-danger-outline btn-sm">Trash</button>
+            </form>
+            {% endif %}
+            <button type="submit" form="note-form" class="btn-primary">Save</button>
+        </div>
+    </div>
+
+    <!-- BODY FOCUSED: strip of metadata at top, full-width body -->
+    {% if mode == 'body' %}
+    <div class="editor-body-focused">
+        <form method="post" id="note-form">
+            <div class="editor-title-wrap">
+                <input type="text" name="title" value="{{ note.title if note else '' }}"
+                       placeholder="Untitled" class="editor-title-input">
+            </div>
+
+            <!-- Collapsible properties panel -->
+            <div class="props-panel" id="props-panel">
+                <button type="button" class="props-toggle" onclick="toggleMetaStrip()" id="props-toggle-btn">
+                    Properties
+                </button>
+                <div class="props-grid hidden" id="body-meta-fields">
+                    <div class="prop-row">
+                        <span class="prop-label">📁 Folder</span>
+                        <select name="folder_id" class="prop-value prop-select">
+                            <option value="">None</option>
+                            {% for f in all_folders %}
+                            <option value="{{ f.id }}" {% if (note and note.folder_id == f.id) or (folder and folder.id == f.id and not note) %}selected{% endif %}>{{ f.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="prop-row">
+                        <span class="prop-label">🔵 Status</span>
+                        <select name="status" class="prop-value prop-select">
+                            <option value="raw" {% if not note or note.status == 'raw' %}selected{% endif %}>Raw</option>
+                            <option value="reviewed" {% if note and note.status == 'reviewed' %}selected{% endif %}>Reviewed</option>
+                            <option value="ready" {% if note and note.status == 'ready' %}selected{% endif %}>Ready</option>
+                        </select>
+                    </div>
+                    <div class="prop-row">
+                        <span class="prop-label">📅 Created</span>
+                        <input type="datetime-local" name="created_at" class="prop-value prop-input"
+                               value="{{ note.created_at.replace(' ','T') if note else '' }}">
+                    </div>
+                    <div class="prop-row">
+                        <span class="prop-label">🔗 Source</span>
+                        <input type="text" name="source" class="prop-value prop-input"
+                               value="{{ note.source if note else '' }}" placeholder="e.g. journal">
+                    </div>
+                    <div class="prop-row">
+                        <span class="prop-label">
+                            <label class="prop-task-label">
+                                <input type="checkbox" name="is_task" value="1"
+                                    {% if note and note.is_task %}checked
+                                    {% elif prefill_is_task is defined and prefill_is_task == '1' %}checked{% endif %}>
+                                ✅ Task
+                            </label>
+                        </span>
+                        <input type="date" name="due_date" class="prop-value prop-input"
+                               value="{{ note.due_date[:10] if note and note.due_date else (prefill_due_date if prefill_due_date is defined else '') }}">
+                    </div>
+                    {% if all_tags %}
+                    <div class="prop-row prop-row-tags">
+                        <span class="prop-label">🏷 Tags</span>
+                        <div class="prop-tags">
+                            {% for tag in all_tags %}
+                            <label class="prop-tag-chip {% if tag.id in note_tags %}prop-tag-active{% endif %}">
+                                <input type="checkbox" name="tag_ids" value="{{ tag.id }}" {% if tag.id in note_tags %}checked{% endif %} style="display:none" onchange="this.parentElement.classList.toggle('prop-tag-active',this.checked)">
+                                {{ tag.name }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% for cf in custom_fields %}
+                    {% set fs_key = 'cf_' + cf.id|string %}
+                    {% set show_cf = field_settings.get(fs_key, {}).get('visible_in_detail', 1) != 0 %}
+                    {% if show_cf %}
+                    <div class="prop-row">
+                        <span class="prop-label">⚙ {{ cf.name }}</span>
+                        <input type="{{ cf.field_type if cf.field_type in ('text','date','number','url','email','phone') else 'text' }}"
+                               name="custom_{{ cf.id }}"
+                               value="{{ note_custom_values.get(cf.id, '') }}"
+                               class="prop-value prop-input">
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="editor-body-wrap">
+                <div id="quill-editor">{% if note %}{{ note.body | safe }}{% endif %}</div>
+                <input type="hidden" name="body" id="body-input">
+            </div>
+        </form>
+    </div>
+
+    {% else %}
+    <!-- DATA FOCUSED: two-column, metadata prominent on right -->
+    <div class="editor-scroll-wrap">
+        <div class="editor-main">
+            <form method="post" id="note-form">
+                <div class="editor-title-wrap">
+                    <input type="text" name="title" value="{{ note.title if note else '' }}"
+                           placeholder="Untitled" class="editor-title-input">
+                </div>
+                <div class="editor-body-wrap">
+                    <div id="quill-editor">{% if note %}{{ note.body | safe }}{% endif %}</div>
+                    <input type="hidden" name="body" id="body-input">
+                </div>
+            </form>
+        </div>
+
+        <div class="editor-meta">
+            {% set show_folder = field_settings.get('folder', {}).get('visible_in_detail', 1) != 0 %}
+            {% if show_folder or not field_settings %}
+            <div class="meta-section">
+                <div class="meta-label">Folder</div>
+                <select name="folder_id" form="note-form" class="form-input-sm">
+                    <option value="">None</option>
+                    {% for f in all_folders %}
+                    <option value="{{ f.id }}" {% if (note and note.folder_id == f.id) or (folder and folder.id == f.id and not note) %}selected{% endif %}>{{ f.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+
+            {% set show_status = field_settings.get('status', {}).get('visible_in_detail', 1) != 0 %}
+            {% if show_status or not field_settings %}
+            <div class="meta-section">
+                <div class="meta-label">Status</div>
+                <select name="status" form="note-form" class="form-input-sm">
+                    <option value="raw" {% if not note or note.status == 'raw' %}selected{% endif %}>Raw</option>
+                    <option value="reviewed" {% if note and note.status == 'reviewed' %}selected{% endif %}>Reviewed</option>
+                    <option value="ready" {% if note and note.status == 'ready' %}selected{% endif %}>Ready</option>
+                </select>
+            </div>
+            {% endif %}
+
+            {% set show_created = field_settings.get('created_at', {}).get('visible_in_detail', 1) != 0 %}
+            {% if show_created or not field_settings %}
+            <div class="meta-section">
+                <div class="meta-label">Date Created</div>
+                <input type="datetime-local" name="created_at" form="note-form" class="form-input-sm"
+                    value="{{ note.created_at.replace(' ','T') if note else '' }}">
+            </div>
+            {% endif %}
+
+            {% set show_source = field_settings.get('source', {}).get('visible_in_detail', 1) != 0 %}
+            {% if show_source or not field_settings %}
+            <div class="meta-section">
+                <div class="meta-label">Source</div>
+                <input type="text" name="source" form="note-form" value="{{ note.source if note else '' }}" placeholder="e.g. journal, email" class="form-input-sm">
+            </div>
+            {% endif %}
+
+            {% set show_due = field_settings.get('due_date', {}).get('visible_in_detail', 1) != 0 %}
+            {% if show_due or not field_settings %}
+            <div class="meta-section">
+                <div class="meta-label">
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                        <input type="checkbox" name="is_task" form="note-form" value="1"
+                            {% if note and note.is_task %}checked
+                            {% elif prefill_is_task is defined and prefill_is_task == '1' %}checked{% endif %}> Task
+                    </label>
+                </div>
+                <input type="date" name="due_date" form="note-form"
+                       value="{{ note.due_date[:10] if note and note.due_date else (prefill_due_date if prefill_due_date is defined else '') }}"
+                       class="form-input-sm">
+            </div>
+            {% endif %}
+
+            {% set show_tags = field_settings.get('tags', {}).get('visible_in_detail', 1) != 0 %}
+            {% if show_tags or not field_settings %}
+            <div class="meta-section">
+                <div class="meta-label">Tags</div>
+                <div class="tag-checkboxes">
+                    {% set ns = namespace(last_group='') %}
+                    {% for tag in all_tags %}
+                    {% if tag.group_name != ns.last_group %}
+                    {% if ns.last_group %}</div>{% endif %}
+                    <div class="tag-group-label">{{ tag.group_name or 'Other' }}</div>
+                    <div class="tag-check-group">
+                    {% set ns.last_group = tag.group_name %}
+                    {% endif %}
+                    <label class="tag-check-label">
+                        <input type="checkbox" name="tag_ids" form="note-form" value="{{ tag.id }}" {% if tag.id in note_tags %}checked{% endif %}>
+                        {{ tag.name }}
+                    </label>
+                    {% endfor %}
+                    {% if all_tags %}</div>{% endif %}
+                </div>
+            </div>
+            {% endif %}
+
+            {% if custom_fields %}
+            <div class="meta-section">
+                <div class="meta-label">Custom Fields</div>
+                {% for cf in custom_fields %}
+                {% set fs_key = 'cf_' + cf.id|string %}
+                {% set show_cf = field_settings.get(fs_key, {}).get('visible_in_detail', 1) != 0 %}
+                {% if show_cf or not field_settings %}
+                <div class="custom-field-row">
+                    <label class="cf-label">{{ cf.name }}</label>
+                    <input type="{{ cf.field_type if cf.field_type in ('text','date','number','url','email','phone') else 'text' }}"
+                           name="custom_{{ cf.id }}" form="note-form"
+                           value="{{ note_custom_values.get(cf.id, '') }}"
+                           class="form-input-sm">
+                </div>
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if note %}
+            <div class="meta-section">
+                <div class="meta-label">Associated Notes</div>
+                {% for ln in linked_notes %}
+                <div class="linked-note-row">
+                    <a href="/note/{{ ln.id }}" class="linked-note-link">{{ ln.title }}</a>
+                    <form method="post" action="/api/note-links/{{ note.id }}/{{ ln.id }}/delete" style="display:inline">
+                        <button class="btn-unlink">✕</button>
+                    </form>
+                </div>
+                {% endfor %}
+                <div class="link-add-row">
+                    <form method="post" action="/api/note-links">
+                        <input type="hidden" name="source_id" value="{{ note.id }}">
+                        <select name="target_id" class="form-input-sm">
+                            <option value="">Link a note…</option>
+                            {% for n in all_notes_for_link %}
+                            <option value="{{ n.id }}">{{ n.title }}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="submit" class="btn-outline btn-sm">Link</button>
+                    </form>
+                </div>
+            </div>
+
+            {% if backlinks %}
+            <div class="meta-section">
+                <div class="meta-label">Backlinks</div>
+                {% for bl in backlinks %}
+                <div class="linked-note-row">
+                    <a href="/note/{{ bl.id }}" class="linked-note-link">← {{ bl.title }}</a>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <div class="meta-section meta-timestamps">
+                <div class="meta-ts">Created: {{ note.created_at }}</div>
+                <div class="meta-ts">Updated: {{ note.updated_at }}</div>
+                {% if note.is_archived %}<div class="meta-ts archived-badge">Archived</div>{% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
+<script>
+var quill = new Quill('#quill-editor', {
+    theme: 'snow',
+    modules: { toolbar: false }
+});
+
+// ── [[ note-linking autocomplete ─────────────────────────────
+var linkMode = false, linkStart = -1, linkQuery = '';
+var linkDropdown = document.createElement('div');
+linkDropdown.id = 'note-link-dropdown';
+linkDropdown.className = 'note-link-dropdown hidden';
+document.body.appendChild(linkDropdown);
+
+quill.on('text-change', function() {
+    var sel = quill.getSelection();
+    if (!sel) return;
+    var text = quill.getText(0, sel.index);
+    var idx = text.lastIndexOf('[[');
+    if (idx !== -1 && sel.index - idx <= 50) {
+        linkMode = true;
+        linkStart = idx;
+        linkQuery = text.slice(idx + 2);
+        fetchNoteLinks(linkQuery, sel.index);
+    } else {
+        closeLinkDropdown();
+    }
+});
+
+quill.root.addEventListener('keydown', function(e) {
+    if (!linkMode) return;
+    var items = linkDropdown.querySelectorAll('.nld-item');
+    var active = linkDropdown.querySelector('.nld-item.nld-active');
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        var next = active ? active.nextElementSibling : items[0];
+        if (next) { if (active) active.classList.remove('nld-active'); next.classList.add('nld-active'); }
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        var prev = active ? active.previousElementSibling : items[items.length - 1];
+        if (prev) { if (active) active.classList.remove('nld-active'); prev.classList.add('nld-active'); }
+    } else if (e.key === 'Enter' && active) {
+        e.preventDefault();
+        insertNoteLink(active.dataset.id, active.dataset.title);
+    } else if (e.key === 'Escape') {
+        closeLinkDropdown();
+    }
+});
+
+function fetchNoteLinks(q, cursorIdx) {
+    if (q.length === 0) { showLinkDropdown([], cursorIdx); return; }
+    fetch('/api/notes/search?q=' + encodeURIComponent(q))
+        .then(function(r) { return r.json(); })
+        .then(function(notes) { showLinkDropdown(notes, cursorIdx); });
+}
+
+function showLinkDropdown(notes, cursorIdx) {
+    if (!notes.length) { linkDropdown.classList.add('hidden'); return; }
+    var bounds = quill.getBounds(cursorIdx);
+    var editorRect = quill.root.getBoundingClientRect();
+    linkDropdown.style.left = (editorRect.left + bounds.left) + 'px';
+    linkDropdown.style.top  = (editorRect.top + window.scrollY + bounds.bottom + 4) + 'px';
+    linkDropdown.innerHTML = '';
+    notes.forEach(function(n, i) {
+        var el = document.createElement('div');
+        el.className = 'nld-item' + (i === 0 ? ' nld-active' : '');
+        el.dataset.id = n.id;
+        el.dataset.title = n.title;
+        el.textContent = n.title || '(Untitled)';
+        el.onmousedown = function(e) { e.preventDefault(); insertNoteLink(n.id, n.title); };
+        linkDropdown.appendChild(el);
+    });
+    linkDropdown.classList.remove('hidden');
+}
+
+function insertNoteLink(id, title) {
+    var sel = quill.getSelection();
+    var deleteLen = (sel ? sel.index : linkStart + 2 + linkQuery.length) - linkStart;
+    quill.deleteText(linkStart, deleteLen);
+    quill.insertText(linkStart, title || 'Note', 'link', '/note/' + id);
+    quill.insertText(linkStart + (title || 'Note').length, ' ');
+    quill.setSelection(linkStart + (title || 'Note').length + 1);
+    closeLinkDropdown();
+}
+
+function closeLinkDropdown() {
+    linkMode = false; linkStart = -1; linkQuery = '';
+    linkDropdown.classList.add('hidden');
+}
+
+document.getElementById('note-form').addEventListener('submit', function() {
+    document.getElementById('body-input').value = quill.root.innerHTML;
+});
+
+function toggleMetaStrip() {
+    var fields = document.getElementById('body-meta-fields');
+    var panel  = document.getElementById('props-panel');
+    if (fields) {
+        fields.classList.toggle('hidden');
+        if (panel) panel.classList.toggle('open', !fields.classList.contains('hidden'));
+    }
+}
+
+function toggleEditorMode() {
+    {% if folder %}
+    var currentMode = '{{ mode }}';
+    var newMode = currentMode === 'body' ? 'data' : 'body';
+    fetch('/api/folders/{{ folder.id }}/set-detail-mode', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({mode: newMode})
+    }).then(function() { window.location.reload(); });
+    {% endif %}
+}
+
+{% if note %}
+var autosaveStatus = document.getElementById('autosave-status');
+function getFormData() {
+    return {
+        title: document.querySelector('[name="title"]').value,
+        body: quill.root.innerHTML,
+        status: document.querySelector('[name="status"]') ? document.querySelector('[name="status"]').value : 'raw',
+        source: document.querySelector('[name="source"]') ? document.querySelector('[name="source"]').value : '',
+        created_at: document.querySelector('[name="created_at"]') ? document.querySelector('[name="created_at"]').value : ''
+    };
+}
+function autosave() {
+    autosaveStatus.textContent = 'Saving…';
+    autosaveStatus.className = 'autosave-status saving';
+    fetch('/note/{{ note.id }}/autosave', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(getFormData())
+    }).then(r => r.json()).then(d => {
+        autosaveStatus.textContent = d.ok ? 'Saved' : 'Error';
+        autosaveStatus.className = 'autosave-status ' + (d.ok ? 'saved' : 'error');
+    }).catch(() => {
+        autosaveStatus.textContent = 'Error';
+        autosaveStatus.className = 'autosave-status error';
+    });
+}
+setInterval(autosave, 30000);
+{% endif %}
+</script>
+{% endblock %}

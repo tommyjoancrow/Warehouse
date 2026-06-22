@@ -688,8 +688,8 @@ def backlink_index(conn, table_id):
     return reverse, pid, col_by_id
 
 def backlinks_for(reverse, pid, target_id, col, col_by_id=None):
-    """Records that link to target_id, optionally filtered by the column's config
-    (a full filter rule: field + operator + value, evaluated with cell_match)."""
+    """Records that link to target_id, with the backlinks column's own full
+    filter + sort config applied (same engine as a main view)."""
     col_by_id = col_by_id or {}
     try:
         opt = json.loads(col['options'] or '{}')
@@ -697,22 +697,24 @@ def backlinks_for(reverse, pid, target_id, col, col_by_id=None):
             opt = {}
     except Exception:
         opt = {}
-    fcol = opt.get('filter_col')
-    fop = opt.get('filter_op') or 'equals'
-    fval = opt.get('filter_val')
-    try:
-        fcol = int(fcol) if fcol not in (None, '') else None
-    except (ValueError, TypeError):
-        fcol = None
-    ftype = (col_by_id.get(fcol) or {}).get('type', 'text') if fcol is not None else None
-    out, seen = [], set()
+    # de-duplicate sources (a record may link via more than one link column)
+    uniq, seen = [], set()
     for src in reverse.get(target_id, []):
         if src['id'] in seen:
             continue
-        if fcol is not None:
-            if not cell_match(ftype, src['cells'].get(fcol, ''), fop, fval):
-                continue
         seen.add(src['id'])
+        uniq.append(src)
+    filters = opt.get('filters') or []
+    sorts = opt.get('sorts') or []
+    # backward-compat with the old single-rule format
+    if not filters and opt.get('filter_col') not in (None, ''):
+        filters = [{'logic': 'AND', 'rules': [{'c': opt.get('filter_col'),
+                                               'op': opt.get('filter_op', 'equals'),
+                                               'v': opt.get('filter_val', '')}]}]
+    columns = list(col_by_id.values())
+    result = apply_view(uniq, columns, filters, 'AND', sorts, '')
+    out = []
+    for src in result:
         name = (src['cells'].get(pid, '') if pid else '') or ('Record ' + str(src['id']))
         out.append({'id': src['id'], 'name': name})
     return out
@@ -1351,6 +1353,20 @@ def search_records_api():
     conn.close()
     return jsonify(out[:15])
 
+def _parse_backlink_options(form):
+    """Build a backlinks column's options from the submitted bl_config JSON
+    ({filters: [...groups...], sorts: [...]}). Falls back to the legacy single rule."""
+    cfg = form.get('bl_config')
+    if cfg:
+        try:
+            data = json.loads(cfg)
+            return {'filters': data.get('filters', []), 'sorts': data.get('sorts', [])}
+        except Exception:
+            return {'filters': [], 'sorts': []}
+    return {'filter_col': form.get('bl_field') or '',
+            'filter_op': form.get('bl_op') or 'equals',
+            'filter_val': (form.get('bl_val') or '').strip()}
+
 # ── Routes: tables ──────────────────────────────────────────────
 @app.route("/api/tables", methods=["POST"])
 def create_table():
@@ -1403,9 +1419,7 @@ def add_column_route(table_id):
     elif ctype == 'link':
         options = {'target_table_id': table_id}  # one workspace: links point within it
     elif ctype == 'backlinks':
-        options = {'filter_col': request.form.get('bl_field') or '',
-                   'filter_op': request.form.get('bl_op') or 'equals',
-                   'filter_val': (request.form.get('bl_val') or '').strip()}
+        options = _parse_backlink_options(request.form)
     view_id = request.form.get('view_id', type=int)
     after_id = request.form.get('after_column_id', type=int)
     conn = get_db()
@@ -1468,9 +1482,7 @@ def update_column(column_id):
     elif ctype == 'link':
         options = {'target_table_id': col['table_id']}
     elif ctype == 'backlinks':
-        options = {'filter_col': request.form.get('bl_field') or '',
-                   'filter_op': request.form.get('bl_op') or 'equals',
-                   'filter_val': (request.form.get('bl_val') or '').strip()}
+        options = _parse_backlink_options(request.form)
     conn.execute("UPDATE columns SET name=?, type=?, options=? WHERE id=?",
                  (name, ctype, json.dumps(options), column_id))
     conn.commit()

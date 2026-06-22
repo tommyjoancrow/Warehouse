@@ -913,7 +913,7 @@ function onColTypeChange(which){
     var blWrap = document.getElementById(which+'-col-backlink-wrap');
     if (blWrap) {
         blWrap.classList.toggle('hidden', t!=='backlinks');
-        if (t==='backlinks') renderBacklinkFilter(which+'-bl-config', COLUMNS, OPS_BY_TYPE, {});
+        if (t==='backlinks') renderBacklinkBuilder(which+'-bl-config', COLUMNS, OPS_BY_TYPE, {});
     }
 }
 function openColumnEdit(colId){
@@ -929,8 +929,7 @@ function openColumnEdit(colId){
     onColTypeChange('edit');
     if (c.type==='backlinks'){
         var blo = {}; try { blo = JSON.parse(c.options || '{}') || {}; } catch(e){}
-        renderBacklinkFilter('edit-bl-config', COLUMNS, OPS_BY_TYPE,
-            {field: blo.filter_col || '', op: blo.filter_op || '', val: blo.filter_val || ''});
+        renderBacklinkBuilder('edit-bl-config', COLUMNS, OPS_BY_TYPE, blo);
     }
     openModal('modal-edit-column');
 }

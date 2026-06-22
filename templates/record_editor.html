@@ -187,7 +187,7 @@ function onFieldTypeChange(){
     var bl = document.getElementById('ef-backlink-wrap');
     if (bl) {
         bl.classList.toggle('hidden', t!=='backlinks');
-        if (t==='backlinks') renderBacklinkFilter('ef-bl-config', EDITOR_COLUMNS, OPS_BY_TYPE, {});
+        if (t==='backlinks') renderBacklinkBuilder('ef-bl-config', EDITOR_COLUMNS, OPS_BY_TYPE, {});
     }
 }
 function openFieldEdit(colId){
@@ -202,8 +202,7 @@ function openFieldEdit(colId){
     onFieldTypeChange();
     if (c.type==='backlinks'){
         var blo = {}; try { blo = JSON.parse(c.options||'{}') || {}; } catch(e){}
-        renderBacklinkFilter('ef-bl-config', EDITOR_COLUMNS, OPS_BY_TYPE,
-            {field: blo.filter_col || '', op: blo.filter_op || '', val: blo.filter_val || ''});
+        renderBacklinkBuilder('ef-bl-config', EDITOR_COLUMNS, OPS_BY_TYPE, blo);
     }
     openModal('modal-edit-field');
 }

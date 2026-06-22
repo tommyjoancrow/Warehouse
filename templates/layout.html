@@ -160,46 +160,91 @@ function _blValueControl(col, op){
     var it = (t === 'email') ? 'email' : (t === 'url') ? 'url' : 'text';
     return '<input type="'+it+'" name="bl_val" class="form-input-sm" placeholder="value…">';
 }
-// Render field + operator + value controls into `containerId`. `cur` = {field,op,val}
-function renderBacklinkFilter(containerId, columns, opsByType, cur){
+// Full filter + sort builder for the Backlinks field config.
+// cur = parsed column options ({filters:[{logic,rules}], sorts:[{c,d}]} or legacy {filter_col,...})
+function renderBacklinkBuilder(containerId, columns, opsByType, cur){
     var box = document.getElementById(containerId);
     if (!box) return;
     cur = cur || {};
-    var state = { field: cur.field || '', op: cur.op || '', val: (cur.val == null ? '' : cur.val) };
-    function colById(id){ for (var i=0;i<columns.length;i++) if (String(columns[i].id) === String(id)) return columns[i]; return null; }
+    var rules = [], logic = 'AND';
+    if (cur.filters && cur.filters[0] && cur.filters[0].rules){ rules = cur.filters[0].rules.slice(); logic = cur.filters[0].logic || 'AND'; }
+    else if (cur.filter_col) { rules = [{c: cur.filter_col, op: cur.filter_op || 'equals', v: cur.filter_val || ''}]; }
+    var state = { logic: logic, rules: rules, sorts: (cur.sorts || []).slice() };
+    var META = [['_updated_at','Date modified'], ['_created_at','Date created']];
+    function colById(id){ for (var i=0;i<columns.length;i++) if (String(columns[i].id)===String(id)) return columns[i]; return null; }
+    function opsFor(c){ return c ? (opsByType[c.type] || opsByType['text'] || []) : (opsByType['text'] || []); }
+    function dirLabels(id){
+        if (id==='_updated_at'||id==='_created_at') return ['Oldest first','Newest first'];
+        var c = colById(id), t = c?c.type:'text';
+        if (t==='checkbox') return ['Unchecked first','Checked first'];
+        if (t==='number'||t==='currency'||t==='percent') return ['Low → High','High → Low'];
+        if (t==='date') return ['Oldest first','Newest first'];
+        return ['A → Z','Z → A'];
+    }
+    function fieldOpts(sel, meta){
+        var h = '<option value="">field…</option>';
+        columns.forEach(function(c){ if (c.type==='backlinks') return; h += '<option value="'+c.id+'"'+(String(c.id)===String(sel)?' selected':'')+'>'+_blEsc(c.name)+'</option>'; });
+        if (meta) META.forEach(function(m){ h += '<option value="'+m[0]+'"'+(String(m[0])===String(sel)?' selected':'')+'>'+m[1]+'</option>'; });
+        return h;
+    }
+    function valControl(c, r){
+        var op = r.op||'', t = c?c.type:'text';
+        if (_BL_NO_VALUE.indexOf(op)!==-1) return '';
+        if (_BL_DAYS.indexOf(op)!==-1) return '<input type="number" min="0" class="form-input-sm bl-b-vinput" value="'+_blEsc(r.v||'')+'" placeholder="days"> <span class="sf-unit">days</span>';
+        if (t==='checkbox') return '';
+        if (t==='date') return '<input type="date" class="form-input-sm bl-b-vinput" value="'+_blEsc(r.v||'')+'">';
+        if (t==='number'||t==='currency'||t==='percent') return '<input type="number" step="any" class="form-input-sm bl-b-vinput" value="'+_blEsc(r.v||'')+'" placeholder="0">';
+        if (t==='select'||t==='multiselect'){ var opts=[]; try{opts=JSON.parse(c.options||'[]');}catch(e){} var h='<select class="form-input-sm bl-b-vinput"><option value="">—</option>'; opts.forEach(function(o){h+='<option value="'+_blEsc(o)+'"'+(String(o)===String(r.v||'')?' selected':'')+'>'+_blEsc(o)+'</option>';}); return h+'</select>'; }
+        var it=(t==='email')?'email':(t==='url')?'url':'text';
+        return '<input type="'+it+'" class="form-input-sm bl-b-vinput" value="'+_blEsc(r.v||'')+'" placeholder="value…">';
+    }
+    function sync(){
+        var rs = state.rules.filter(function(r){ return r.c; });
+        var cfg = { filters: rs.length ? [{logic: state.logic, rules: rs}] : [], sorts: state.sorts.filter(function(s){ return s.c; }) };
+        box.querySelector('.bl-b-config').value = JSON.stringify(cfg);
+    }
     function build(){
-        var col = colById(state.field);
-        var ops = col ? (opsByType[col.type] || opsByType['text'] || []) : [];
-        if (col && !ops.some(function(o){ return o[0] === state.op; })) state.op = ops.length ? ops[0][0] : '';
-        var h = '<span>Only where</span>';
-        h += '<select class="form-input-sm bl-field-sel"><option value="">(any field)</option>';
-        columns.forEach(function(c){
-            if (c.type === 'backlinks' || c.type === 'longtext') return;
-            h += '<option value="'+c.id+'"'+(String(c.id)===String(state.field)?' selected':'')+'>'+_blEsc(c.name)+'</option>';
+        var h = '<div class="bl-builder">';
+        h += '<div class="bl-b-head">Show records where <select class="form-input-sm bl-b-logic"><option value="AND"'+(state.logic==='AND'?' selected':'')+'>all (AND)</option><option value="OR"'+(state.logic==='OR'?' selected':'')+'>any (OR)</option></select></div>';
+        state.rules.forEach(function(r,i){
+            var c=colById(r.c), ops=opsFor(c);
+            if (c && !ops.some(function(o){return o[0]===r.op;})) r.op = ops.length?ops[0][0]:'';
+            h += '<div class="bl-b-row" data-ri="'+i+'">';
+            h += '<select class="form-input-sm bl-b-field">'+fieldOpts(r.c,false)+'</select>';
+            h += '<select class="form-input-sm bl-b-op">'; ops.forEach(function(o){ h+='<option value="'+o[0]+'"'+(o[0]===r.op?' selected':'')+'>'+_blEsc(o[1])+'</option>'; }); h += '</select>';
+            h += '<span class="bl-b-valwrap">'+valControl(c,r)+'</span>';
+            h += '<button type="button" class="at-remove-btn bl-b-del">✕</button></div>';
         });
-        h += '</select>';
-        // hidden field carries the chosen field id to the form
-        h += '<input type="hidden" name="bl_field" value="'+_blEsc(state.field)+'">';
-        if (col){
-            h += '<select class="form-input-sm bl-op-sel" name="bl_op">';
-            ops.forEach(function(o){ h += '<option value="'+o[0]+'"'+(o[0]===state.op?' selected':'')+'>'+_blEsc(o[1])+'</option>'; });
-            h += '</select>';
-            h += _blValueControl(col, state.op);
-        } else {
-            h += '<input type="hidden" name="bl_op" value=""><input type="hidden" name="bl_val" value="">';
-        }
+        h += '<button type="button" class="sf-add-btn bl-b-addrule">+ Add condition</button>';
+        h += '<div class="bl-b-sorthead">Sort</div>';
+        state.sorts.forEach(function(s,i){
+            var lbl=dirLabels(s.c);
+            h += '<div class="bl-b-sortrow" data-si="'+i+'">';
+            h += '<select class="form-input-sm bl-b-sfield">'+fieldOpts(s.c,true)+'</select>';
+            h += '<select class="form-input-sm bl-b-sdir"><option value="asc"'+(s.d==='asc'?' selected':'')+'>'+lbl[0]+'</option><option value="desc"'+(s.d==='desc'?' selected':'')+'>'+lbl[1]+'</option></select>';
+            h += '<button type="button" class="at-remove-btn bl-b-sdel">✕</button></div>';
+        });
+        h += '<button type="button" class="sf-add-btn bl-b-addsort">+ Add sort</button>';
+        h += '<input type="hidden" name="bl_config" class="bl-b-config"></div>';
         box.innerHTML = h;
-        var fieldSel = box.querySelector('.bl-field-sel');
-        fieldSel.onchange = function(){ state = { field: this.value, op: '', val: '' }; build(); };
-        var opSel = box.querySelector('.bl-op-sel');
-        if (opSel) opSel.onchange = function(){
-            var valEl = box.querySelector('[name=bl_val]');
-            state.val = valEl ? valEl.value : '';
-            state.op = this.value; build();
-        };
-        // restore current value into the freshly built control
-        var valEl = box.querySelector('[name=bl_val]');
-        if (valEl && state.val !== '' && valEl.tagName) { valEl.value = state.val; }
+        box.querySelector('.bl-b-logic').onchange = function(){ state.logic=this.value; sync(); };
+        box.querySelectorAll('.bl-b-row').forEach(function(row){
+            var i=+row.dataset.ri;
+            row.querySelector('.bl-b-field').onchange = function(){ state.rules[i].c=this.value; var c=colById(this.value),ops=opsFor(c); state.rules[i].op=ops.length?ops[0][0]:''; state.rules[i].v=''; build(); };
+            row.querySelector('.bl-b-op').onchange = function(){ state.rules[i].op=this.value; build(); };
+            var vi=row.querySelector('.bl-b-vinput');
+            if (vi){ vi.oninput=function(){ state.rules[i].v=this.value; sync(); }; vi.onchange=function(){ state.rules[i].v=this.value; sync(); }; }
+            row.querySelector('.bl-b-del').onclick = function(){ state.rules.splice(i,1); build(); };
+        });
+        box.querySelector('.bl-b-addrule').onclick = function(){ var c=columns.filter(function(x){return x.type!=='backlinks';})[0]; var ops=opsFor(c); state.rules.push({c:c?String(c.id):'',op:ops.length?ops[0][0]:'',v:''}); build(); };
+        box.querySelectorAll('.bl-b-sortrow').forEach(function(row){
+            var i=+row.dataset.si;
+            row.querySelector('.bl-b-sfield').onchange=function(){ state.sorts[i].c=this.value; build(); };
+            row.querySelector('.bl-b-sdir').onchange=function(){ state.sorts[i].d=this.value; sync(); };
+            row.querySelector('.bl-b-sdel').onclick=function(){ state.sorts.splice(i,1); build(); };
+        });
+        box.querySelector('.bl-b-addsort').onclick = function(){ state.sorts.push({c:'_updated_at',d:'desc'}); build(); };
+        sync();
     }
     build();
 }

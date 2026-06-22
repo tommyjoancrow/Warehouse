@@ -2201,25 +2201,27 @@ kbd {
 /* ── Grid header: sort / caret menu / insert / drag ─────────── */
 #data-table thead th[data-col-id] { position: relative; cursor: grab; }
 #data-table thead th[data-col-id]:active { cursor: grabbing; }
-.th-inner { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 7px 10px; }
-.th-label { cursor: pointer; flex: 1; display: flex; align-items: center; gap: 4px; }
+.th-inner { display: flex; align-items: center; justify-content: flex-start; gap: 2px; padding: 7px 10px; flex-wrap: nowrap; }
+.th-label { cursor: pointer; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .th-label:hover { color: var(--green); }
 .th-sort { font-size: 9px; color: var(--green); }
 .th-caret {
     background: none; border: none; cursor: pointer; color: var(--text-faint);
-    font-size: 11px; padding: 2px 4px; border-radius: 4px; opacity: 0;
+    font-size: 11px; padding: 2px 3px; border-radius: 4px; opacity: 0; flex-shrink: 0;
 }
 th:hover .th-caret { opacity: 1; }
 .th-caret:hover { background: var(--green-light); color: var(--green); }
 
+/* insert-field button straddling the right border of each header */
 .th-insert {
-    position: absolute; right: -9px; top: 50%; transform: translateY(-50%);
-    width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--border);
-    background: var(--bg); color: var(--text-muted); cursor: pointer; font-size: 11px;
-    line-height: 1; padding: 0; z-index: 6; opacity: 0;
+    position: absolute; right: -8px; top: 50%; transform: translateY(-50%);
+    width: 17px; height: 17px; border-radius: 50%; border: 1px solid var(--green);
+    background: var(--bg); color: var(--green); cursor: pointer; font-size: 12px;
+    line-height: 15px; text-align: center; padding: 0; z-index: 25; opacity: 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,.15);
 }
-th:hover .th-insert { opacity: 1; }
-.th-insert:hover { background: var(--green); color: #fff; border-color: var(--green); }
+th:hover .th-insert, .th-insert:hover { opacity: 1; }
+.th-insert:hover { background: var(--green); color: #fff; }
 
 .th-dragging { opacity: .4; }
 .th-drop { box-shadow: inset 3px 0 0 var(--green); }
@@ -2311,3 +2313,28 @@ tr:hover .row-expand { opacity: 1; }
 .cp-actions button { background: var(--green); color: #fff; border: none; border-radius: 6px; padding: 5px 14px; font-size: 13px; cursor: pointer; }
 .cp-actions button:hover { background: var(--green-dark); }
 .data-cell { position: relative; }
+
+/* ── Add-field modal: two options ───────────────────────────── */
+#addfield-choose { display: flex; flex-direction: column; gap: 8px; }
+.addfield-option {
+    display: flex; align-items: center; gap: 12px; text-align: left;
+    border: 1px solid var(--border); background: var(--bg); border-radius: 8px;
+    padding: 12px 14px; cursor: pointer; width: 100%;
+}
+.addfield-option:hover { border-color: var(--green); background: var(--green-hover); }
+.afo-icon { font-size: 20px; width: 28px; text-align: center; color: var(--green); flex-shrink: 0; }
+.afo-text { display: flex; flex-direction: column; gap: 2px; }
+.afo-text strong { font-size: 14px; }
+.afo-text span { font-size: 12px; color: var(--text-muted); }
+.addfield-back { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 13px; padding: 0 0 10px; }
+.addfield-back:hover { color: var(--green); }
+
+/* ── Bulk edit inline ───────────────────────────────────────── */
+.bulk-edit-wrap { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ── Archived rows / calendar drop ──────────────────────────── */
+.row-archived { opacity: .5; }
+.row-archived:hover { opacity: .8; }
+.cal-day.cal-drop { background: var(--green-light); outline: 2px dashed var(--green); outline-offset: -2px; }
+.cal-event { cursor: grab; }
+.cal-event:active { cursor: grabbing; }

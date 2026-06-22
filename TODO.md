@@ -24,10 +24,6 @@ _(add ideas here as they come up)_
 These are things I know are incomplete or rough after the big rewrite to the
 tables/columns/records/views model.
 
-- 🔴 **Calendar "+" doesn't pre-fill the date.** Clicking the `+` on a calendar
-  day opens a new record but does not set that day as the date-column value.
-- 🔴 **No drag-to-reschedule on the calendar.** In the old version you could drag
-  a task to a new day; that isn't wired up in the new model yet.
 - 🔴 **Link filter UX is raw.** The "links to" filter expects you to type a record
   *id* into the value box instead of picking a record by name.
 - 🔴 **No way to reorder views in the sidebar.** Position is stored but
@@ -38,10 +34,31 @@ tables/columns/records/views model.
   allows multiple links. No option yet for "only one linked record."
 - 🔴 **Select/multiselect options have no colors.** Airtable-style colored option
   chips would be nice.
+- 🔴 **Bulk edit doesn't cover link fields well.** Tag/multiselect bulk edit takes
+  comma-separated text; link fields aren't offered a record picker in bulk edit.
 
 ---
 
 ## ✅ Done
+
+- ✅ 2026-06-21 — Grid/column/bulk/calendar batch:
+  - Fixed the half-hidden **insert-field (+) buttons** between column headers and
+    moved the **field-options caret (▾)** to sit right next to the header text.
+  - **Add Field** is now a two-step chooser: *Add an existing field* (lists the
+    fields hidden in this view) or *Create a new field*. Removed the old
+    **Columns** toolbar button and the trailing **+** column on the right.
+  - **Bulk actions** on selected records: **Archive**, **Delete (trash)**, and
+    **bulk-edit any field** (pick a field + value, applied to all selected).
+  - **Archive** works per the original spec: archived records are hidden from
+    views by default, excluded from search, and shown (dimmed, sorted to the
+    bottom) via a **Show archived** toggle that appears when archived records
+    exist. Unarchive via bulk action while viewing archived.
+  - Added a **Pin** field (checkbox). **New views default to sorting by Pin
+    first, then date modified** (multi-sort). Sorting by record metadata
+    (`_updated_at` / `_created_at`) is now supported.
+  - **Calendar fixed**: the per-day **+** pre-fills that day into the date
+    column, and events are **drag-to-reschedule** (drop on another day updates
+    the date). Calendar is a per-view type with a date-column anchor selector.
 
 - ✅ 2026-06-21 — Sidebar/view cleanup + per-view detail layouts:
   - Removed the standalone **Calendar** sidebar link and the seeded **Task

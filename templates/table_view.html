@@ -53,10 +53,15 @@
                 ↕⚙ Sort &amp; filter{% if active_count>0 %} <span class="at-badge">{{ active_count }}</span>{% endif %}
             </button>
 
-            <button type="button" class="at-btn" onclick="toggleSFPanel('cols')">⚙ Columns</button>
-
             {% if view %}
             <button type="button" class="at-btn" onclick="openDetailSettings()">🗂 Detail layout</button>
+            {% endif %}
+
+            {% if archived_count %}
+            <a href="?{% if view_type!='grid' %}vt={{ view_type }}&{% endif %}archived={{ '0' if show_archived else '1' }}"
+               class="at-btn {% if show_archived %}at-btn-active{% endif %}">
+                {% if show_archived %}Hide archived{% else %}Show archived ({{ archived_count }}){% endif %}
+            </a>
             {% endif %}
 
             {% if view_type == 'calendar' and date_columns %}
@@ -100,22 +105,6 @@
             </div>
         </div>
 
-        <!-- COLUMNS PANEL -->
-        <div class="at-panel sf-panel hidden" id="cols-panel">
-            <div class="sf-section">
-                <div class="sf-section-label">Show / hide columns</div>
-                {% for c in columns %}
-                <label class="col-toggle-row">
-                    <input type="checkbox" class="col-vis-cb" value="{{ c.id }}" {% if c.id not in hidden %}checked{% endif %} onchange="toggleColumnVis()">
-                    <span class="col-type-dot">{{ {'text':'A','longtext':'¶','number':'#','date':'📅','checkbox':'☑','select':'▼','multiselect':'�<','url':'🔗','email':'@','phone':'☎','currency':'$','percent':'%','link':'↗'}.get(c.type,'A') }}</span>
-                    {{ c.name }}
-                </label>
-                {% endfor %}
-            </div>
-            <div class="sf-section">
-                <button type="button" class="sf-add-btn" onclick="openAddField(null)">+ Add field</button>
-            </div>
-        </div>
     </form>
 </div>
 
@@ -123,8 +112,17 @@
 <div class="bulk-bar hidden" id="bulk-bar">
     <span class="bulk-count" id="bulk-count">0 selected</span>
     <div class="bulk-bar-actions">
+        <button type="button" class="at-btn" onclick="bulkArchive()">📥 Archive</button>
         <button type="button" class="at-btn" onclick="bulkDelete()">🗑 Delete</button>
-        <button type="button" class="at-btn" onclick="clearSelection()">Clear selection</button>
+        <span class="bulk-edit-wrap">
+            <select class="form-input-sm" id="bulk-field" onchange="onBulkFieldChange()">
+                <option value="">Bulk edit field…</option>
+                {% for c in columns %}{% if not loop.first %}<option value="{{ c.id }}" data-type="{{ c.type }}" data-options='{{ c.options }}'>{{ c.name }}</option>{% endif %}{% endfor %}
+            </select>
+            <span id="bulk-value-wrap"></span>
+            <button type="button" class="at-btn at-btn-primary hidden" id="bulk-apply" onclick="applyBulkEdit()">Apply</button>
+        </span>
+        <button type="button" class="at-btn" onclick="clearSelection()">Clear</button>
     </div>
 </div>
 
@@ -156,12 +154,11 @@
                     <button type="button" class="th-insert" onclick="openAddField({{ c.id }})" title="Insert field here">+</button>
                 </th>
                 {% endfor %}
-                <th class="th-addcol"><button type="button" class="addcol-btn" onclick="openAddField(null)" title="Add field">+</button></th>
             </tr>
         </thead>
         <tbody>
             {% for rec in records %}
-            <tr data-record-id="{{ rec.id }}">
+            <tr data-record-id="{{ rec.id }}" {% if rec.archived %}class="row-archived"{% endif %}>
                 <td class="td-check">
                     <input type="checkbox" class="row-cb" value="{{ rec.id }}" onchange="onRowCheck()">
                     <a href="/record/{{ rec.id }}{{ rec_suffix }}" class="row-expand" title="Open record">⤢</a>
@@ -186,7 +183,6 @@
                     {% endif %}
                 </td>
                 {% endfor %}
-                <td class="td-addcol"></td>
             </tr>
             {% endfor %}
         </tbody>
@@ -245,13 +241,15 @@
             {% endfor %}
             {% for week in cal_weeks %}
                 {% for day in week %}
-                <div class="cal-day {% if not day.in_month %}cal-out{% endif %} {% if day.is_today %}cal-today{% endif %}">
+                <div class="cal-day {% if not day.in_month %}cal-out{% endif %} {% if day.is_today %}cal-today{% endif %}"
+                     data-date="{{ day.date }}" ondragover="calDragOver(event)" ondragleave="calDragLeave(event)" ondrop="calDrop(event)">
                     <div class="cal-day-top">
                         <span class="cal-day-num">{{ day.day }}</span>
-                        <a href="/record/new?table_id={{ table.id }}{% if view %}&view_id={{ view.id }}{% endif %}" class="cal-add-btn" title="New record">+</a>
+                        <a href="/record/new?table_id={{ table.id }}{% if view %}&view_id={{ view.id }}{% endif %}&prefill_col={{ date_col_id }}&prefill_val={{ day.date }}" class="cal-add-btn" title="New record on {{ day.date }}">+</a>
                     </div>
                     {% for r in day.records %}
-                    <a href="/record/{{ r.id }}{{ rec_suffix }}" class="cal-event">{{ r.label }}</a>
+                    <a href="/record/{{ r.id }}{{ rec_suffix }}" class="cal-event" draggable="true"
+                       data-record="{{ r.id }}" ondragstart="calDragStart(event)">{{ r.label }}</a>
                     {% endfor %}
                 </div>
                 {% endfor %}
@@ -267,13 +265,28 @@
 <div class="modal hidden" id="modal-add-column">
     <div class="modal-header"><h3>Add Field</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
 
-    <div id="existing-fields-section">
-        <label class="field-section-label">Add an existing field</label>
-        <div id="existing-fields-list"></div>
-        <div class="or-divider"><span>or create a new field</span></div>
+    <!-- Step 1: choose existing or new -->
+    <div id="addfield-choose">
+        <button type="button" class="addfield-option" onclick="addFieldShow('existing')">
+            <span class="afo-icon">▦</span>
+            <span class="afo-text"><strong>Add an existing field</strong><span>Show a field you already created</span></span>
+        </button>
+        <button type="button" class="addfield-option" onclick="addFieldShow('new')">
+            <span class="afo-icon">＋</span>
+            <span class="afo-text"><strong>Create a new field</strong><span>Design a new field for your workspace</span></span>
+        </button>
     </div>
 
-    <form action="/api/tables/{{ table.id }}/columns" method="post" id="add-col-form">
+    <!-- Step 2a: existing fields list -->
+    <div id="addfield-existing" class="hidden">
+        <button type="button" class="addfield-back" onclick="addFieldShow('choose')">← Back</button>
+        <label class="field-section-label">Pick a field to add</label>
+        <div id="existing-fields-list"></div>
+    </div>
+
+    <!-- Step 2b: new field form -->
+    <form action="/api/tables/{{ table.id }}/columns" method="post" id="add-col-form" class="hidden">
+        <button type="button" class="addfield-back" onclick="addFieldShow('choose')">← Back</button>
         <input type="hidden" name="view_id" id="add-col-view" value="{{ view.id if view else '' }}">
         <input type="hidden" name="after_column_id" id="add-col-after" value="">
         <div class="form-group">
@@ -369,6 +382,22 @@ var OPS_BY_TYPE = {{ ops_by_type | tojson }};
 var currentSorts = {{ sorts | tojson }};
 var currentFilters = {{ filters | tojson }};
 var DETAIL_FIELDS = {{ detail_field_ids | tojson if detail_field_ids is defined else '[]' }};
+var DATE_COL_ID = {{ date_col_id if date_col_id else 'null' }};
+
+// ── Calendar drag-to-reschedule ───────────────────────────────
+var calDragRec = null;
+function calDragStart(e){ calDragRec = e.target.dataset.record; e.dataTransfer.effectAllowed='move'; }
+function calDragOver(e){ e.preventDefault(); e.currentTarget.classList.add('cal-drop'); }
+function calDragLeave(e){ e.currentTarget.classList.remove('cal-drop'); }
+function calDrop(e){
+    e.preventDefault();
+    e.currentTarget.classList.remove('cal-drop');
+    if (!calDragRec || !DATE_COL_ID) return;
+    var date = e.currentTarget.dataset.date;
+    fetch('/api/cells', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({record_id: parseInt(calDragRec), column_id: DATE_COL_ID, value: date})})
+        .then(function(){ window.location.reload(); });
+}
 
 var colById = {};
 COLUMNS.forEach(function(c){ colById[c.id] = c; });
@@ -408,16 +437,8 @@ function saveDetailFields(){
 }
 
 // ── Panels ───────────────────────────────────────────────────
-function toggleSFPanel(which) {
-    var sf = document.getElementById('sf-panel');
-    var cols = document.getElementById('cols-panel');
-    if (which === 'cols') {
-        sf.classList.add('hidden');
-        cols.classList.toggle('hidden');
-    } else {
-        cols.classList.add('hidden');
-        sf.classList.toggle('hidden');
-    }
+function toggleSFPanel() {
+    document.getElementById('sf-panel').classList.toggle('hidden');
 }
 function clearSearch(){ document.getElementById('at-search-input').value=''; document.getElementById('filter-form').submit(); }
 function setViewType(vt){ document.getElementById('vt-input').value = vt; document.getElementById('filter-form').submit(); }
@@ -488,14 +509,6 @@ function syncFilters(){ document.getElementById('filters-input').value = JSON.st
 
 renderSorts(); renderFilters();
 
-// ── Column visibility ─────────────────────────────────────────
-function toggleColumnVis(){
-    var hidden = [];
-    document.querySelectorAll('.col-vis-cb').forEach(function(cb){ if(!cb.checked) hidden.push(parseInt(cb.value)); });
-    document.getElementById('hidden-input').value = JSON.stringify(hidden);
-    document.getElementById('filter-form').submit();
-}
-
 // ── Header: sort + field menu ─────────────────────────────────
 function sortByCol(colId){
     var cur = currentSorts.length===1 && String(currentSorts[0].c)===String(colId) ? currentSorts[0].d : null;
@@ -530,21 +543,25 @@ function deleteColumnById(colId){
 function openAddField(afterColId){
     document.getElementById('add-col-after').value = afterColId || '';
     // Build the "existing fields" list = fields hidden in this view
-    var section = document.getElementById('existing-fields-section');
     var list = document.getElementById('existing-fields-list');
     var hidden = COLUMNS.filter(function(c){ return HIDDEN_IDS.indexOf(c.id) !== -1; });
     if (VIEW_ID && hidden.length){
         list.innerHTML = hidden.map(function(c){
             return '<button type="button" class="existing-field-btn" onclick="addExistingField('+c.id+')">'+escapeHtml(c.name)+' <span class="eff-type">'+c.type+'</span></button>';
         }).join('');
-        section.classList.remove('hidden');
     } else {
-        section.classList.add('hidden');
+        list.innerHTML = '<div class="cp-empty">No hidden fields to add — every field is already shown here. Create a new one instead.</div>';
     }
     document.getElementById('add-col-name').value = '';
     onColTypeChange('add');
+    addFieldShow('choose');
     openModal('modal-add-column');
-    setTimeout(function(){ document.getElementById('add-col-name').focus(); }, 50);
+}
+function addFieldShow(step){
+    document.getElementById('addfield-choose').classList.toggle('hidden', step!=='choose');
+    document.getElementById('addfield-existing').classList.toggle('hidden', step!=='existing');
+    document.getElementById('add-col-form').classList.toggle('hidden', step!=='new');
+    if (step==='new') setTimeout(function(){ document.getElementById('add-col-name').focus(); }, 50);
 }
 function addExistingField(colId){
     var after = document.getElementById('add-col-after').value;
@@ -757,9 +774,61 @@ function bulkDelete(){
     var ids = getSelectedIds();
     if (!ids.length) return;
     if (!confirm('Move '+ids.length+' record(s) to trash?')) return;
+    bulkAction('delete', null);
+}
+function bulkArchive(){
+    var ids = getSelectedIds();
+    if (!ids.length) return;
+    bulkAction('archive', null);
+}
+function bulkAction(action, changes){
+    var ids = getSelectedIds();
     fetch('/api/records/bulk', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({record_ids: ids, action:'delete'})})
+        body: JSON.stringify({record_ids: ids, action: action, changes: changes || {}})})
         .then(function(r){return r.json();}).then(function(d){ if(d.ok) window.location.reload(); });
+}
+// Bulk edit a chosen field across selected records
+function onBulkFieldChange(){
+    var sel = document.getElementById('bulk-field');
+    var opt = sel.options[sel.selectedIndex];
+    var wrap = document.getElementById('bulk-value-wrap');
+    var apply = document.getElementById('bulk-apply');
+    if (!sel.value){ wrap.innerHTML=''; apply.classList.add('hidden'); return; }
+    var type = opt.dataset.type;
+    var options = []; try { options = JSON.parse(opt.dataset.options||'[]'); } catch(e){}
+    var html = '';
+    if (type==='checkbox'){
+        html = '<select class="form-input-sm" id="bulk-value"><option value="1">Checked</option><option value="0">Unchecked</option></select>';
+    } else if (type==='select'){
+        html = '<select class="form-input-sm" id="bulk-value"><option value=""></option>'+options.map(function(o){return '<option>'+escapeHtml(o)+'</option>';}).join('')+'</select>';
+    } else if (type==='date'){
+        html = '<input type="date" class="form-input-sm" id="bulk-value">';
+    } else if (type==='number'||type==='currency'||type==='percent'){
+        html = '<input type="number" step="any" class="form-input-sm" id="bulk-value">';
+    } else if (type==='tag'||type==='multiselect'){
+        html = '<input type="text" class="form-input-sm" id="bulk-value" placeholder="comma,separated">';
+    } else {
+        html = '<input type="text" class="form-input-sm" id="bulk-value">';
+    }
+    wrap.innerHTML = html;
+    apply.classList.remove('hidden');
+}
+function applyBulkEdit(){
+    var sel = document.getElementById('bulk-field');
+    if (!sel.value) return;
+    var opt = sel.options[sel.selectedIndex];
+    var type = opt.dataset.type;
+    var el = document.getElementById('bulk-value');
+    var raw = el ? el.value : '';
+    var value;
+    if (type==='tag'||type==='multiselect'){
+        value = JSON.stringify(raw.split(',').map(function(s){return s.trim();}).filter(Boolean));
+    } else {
+        value = raw;
+    }
+    var n = getSelectedIds().length;
+    if (!confirm('Set “'+opt.textContent+'” on '+n+' record(s)?')) return;
+    bulkAction('set_cell', {column_id: parseInt(sel.value), value: value});
 }
 
 // ── Views ─────────────────────────────────────────────────────

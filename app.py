@@ -119,6 +119,9 @@ def init_db():
         conn.execute("ALTER TABLE views ADD COLUMN column_order_json TEXT DEFAULT '[]'")
     if 'detail_fields_json' not in view_cols:
         conn.execute("ALTER TABLE views ADD COLUMN detail_fields_json TEXT DEFAULT '[]'")
+    rec_cols = [r[1] for r in conn.execute("PRAGMA table_info(records)").fetchall()]
+    if 'archived' not in rec_cols:
+        conn.execute("ALTER TABLE records ADD COLUMN archived INTEGER DEFAULT 0")
     conn.commit()
     # purge trash > 30 days
     cutoff = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d %H:%M")
@@ -152,15 +155,16 @@ def seed(conn):
 
     # ── One shared set of columns. Name is primary (position 0). ──
     c_name   = add_col('Name', 'text', 0)
-    c_type   = add_col('Type', 'select', 1, ['Company','Person','Task','Note'])
-    c_status = add_col('Status', 'select', 2, ['Lead','Active','Inactive','To do','In progress','Done'])
-    c_email  = add_col('Email', 'email', 3)
-    c_phone  = add_col('Phone', 'phone', 4)
-    c_web    = add_col('Website', 'url', 5)
-    c_link   = add_col('Linked to', 'link', 6, {'target_table_id': tid})
-    c_due    = add_col('Due Date', 'date', 7)
-    c_pri    = add_col('Priority', 'select', 8, ['Low','Medium','High'])
-    c_notes  = add_col('Notes', 'longtext', 9)
+    c_pin    = add_col('Pin', 'checkbox', 1)
+    c_type   = add_col('Type', 'select', 2, ['Company','Person','Task','Note'])
+    c_status = add_col('Status', 'select', 3, ['Lead','Active','Inactive','To do','In progress','Done'])
+    c_email  = add_col('Email', 'email', 4)
+    c_phone  = add_col('Phone', 'phone', 5)
+    c_web    = add_col('Website', 'url', 6)
+    c_link   = add_col('Linked to', 'link', 7, {'target_table_id': tid})
+    c_due    = add_col('Due Date', 'date', 8)
+    c_pri    = add_col('Priority', 'select', 9, ['Low','Medium','High'])
+    c_notes  = add_col('Notes', 'longtext', 10)
 
     # ── Records (all in the one table, distinguished by Type) ──
     acme   = add_record({c_name:'Acme Corp', c_type:'Company', c_web:'https://acme.example', c_status:'Active'})
@@ -185,19 +189,23 @@ def seed(conn):
                 c_notes:'<p>Everything lives in <strong>one table</strong>. The items in the sidebar are <em>views</em> — saved filters into this table. Try editing a view\'s filters, or make your own.</p>'})
 
     # ── Views (the sidebar). Each hides columns that don't apply. ──
-    ALL = [c_name,c_type,c_status,c_email,c_phone,c_web,c_link,c_due,c_pri,c_notes]
+    ALL = [c_name,c_pin,c_type,c_status,c_email,c_phone,c_web,c_link,c_due,c_pri,c_notes]
     def hide_all_but(keep):
         return [c for c in ALL if c not in keep]
+    # default multi-sort: pinned first, then most recently modified
+    def pin_sort(extra=None):
+        s = [{'c': c_pin, 'd': 'desc'}, {'c': '_updated_at', 'd': 'desc'}]
+        return s
 
-    add_view('All records', 'grid', [], [{'c':c_name,'d':'asc'}], [], 0)
+    add_view('All records', 'grid', [], pin_sort(), [], 0)
     add_view('Companies', 'grid', [{'c':c_type,'op':'equals','v':'Company'}],
-             [{'c':c_name,'d':'asc'}], hide_all_but([c_name,c_status,c_web,c_link,c_notes]), 1)
+             pin_sort(), hide_all_but([c_name,c_pin,c_status,c_web,c_link,c_notes]), 1)
     add_view('People', 'grid', [{'c':c_type,'op':'equals','v':'Person'}],
-             [{'c':c_name,'d':'asc'}], hide_all_but([c_name,c_status,c_email,c_phone,c_link,c_notes]), 2)
+             pin_sort(), hide_all_but([c_name,c_pin,c_status,c_email,c_phone,c_link,c_notes]), 2)
     add_view('Tasks', 'grid', [{'c':c_type,'op':'equals','v':'Task'}],
-             [{'c':c_due,'d':'asc'}], hide_all_but([c_name,c_status,c_due,c_pri,c_link]), 3)
+             pin_sort(), hide_all_but([c_name,c_pin,c_status,c_due,c_pri,c_link]), 3)
     add_view('Notes', 'grid', [{'c':c_type,'op':'equals','v':'Note'}],
-             [{'c':c_due,'d':'desc'}], hide_all_but([c_name,c_notes,c_due]), 4)
+             pin_sort(), hide_all_but([c_name,c_pin,c_notes,c_due]), 4)
 
     conn.commit()
 
@@ -226,6 +234,7 @@ def load_records(conn, table_id, include_deleted=False):
     for r in rows:
         recs.append({'id': r['id'], 'created_at': r['created_at'], 'updated_at': r['updated_at'],
                      'deleted_at': r['deleted_at'], 'table_id': r['table_id'],
+                     'archived': (r['archived'] if 'archived' in r.keys() else 0),
                      'cells': cells.get(r['id'], {})})
     return recs
 
@@ -340,11 +349,17 @@ def apply_view(recs, columns, filters, filter_logic, sorts, search):
         recs = [r for r in recs if passes(r)]
     # sorts (apply last-to-first for stable multi-sort)
     for s in reversed(sorts or []):
-        col = col_by_id.get(int(s.get('c'))) if s.get('c') else None
+        cref = s.get('c')
+        rev = (s.get('d') == 'desc')
+        if cref in ('_updated_at', '_created_at'):
+            attr = 'updated_at' if cref == '_updated_at' else 'created_at'
+            recs.sort(key=lambda r: r.get(attr) or '', reverse=rev)
+            continue
+        col = col_by_id.get(int(cref)) if cref else None
         if not col:
             continue
-        recs.sort(key=lambda r: cell_sort_key(col['type'], r['cells'].get(col['id'], '')),
-                  reverse=(s.get('d') == 'desc'))
+        recs.sort(key=lambda r, c=col: cell_sort_key(c['type'], r['cells'].get(c['id'], '')),
+                  reverse=rev)
     return recs
 
 def parse_params(view=None):
@@ -451,8 +466,14 @@ def index():
 def _render_table(conn, table, view):
     columns = get_columns(conn, table['id'])
     vt, filters, logic, sorts, hidden, search = parse_params(view)
+    show_archived = request.args.get('archived') == '1'
     recs = load_records(conn, table['id'])
     recs = apply_view(recs, columns, filters, logic, sorts, search)
+    archived_count = sum(1 for r in recs if r['archived'])
+    if not show_archived:
+        recs = [r for r in recs if not r['archived']]
+    else:
+        recs.sort(key=lambda r: r['archived'])  # archived to the bottom (stable)
     recs, link_names = build_grid(conn, recs, columns)
     views = [dict(v) for v in conn.execute(
         "SELECT * FROM views WHERE table_id=? ORDER BY position, id", (table['id'],)).fetchall()]
@@ -504,6 +525,7 @@ def _render_table(conn, table, view):
         filters=filters, filter_logic=logic, sorts=sorts, hidden=list(hidden_set),
         search=search, date_col_id=date_col_id, date_columns=date_columns,
         detail_field_ids=detail_field_ids,
+        show_archived=show_archived, archived_count=archived_count,
         cal_weeks=cal_weeks, cal_month_label=cal_month_label, cal_prev=cal_prev, cal_next=cal_next,
         page_title=(view['name'] if view else table['name']),
         active_table_id=table['id'], active_view_id=(view['id'] if view else None))
@@ -591,6 +613,11 @@ def new_record_form():
                         prefill[int(f['c'])] = f['v']
             except Exception:
                 pass
+    # calendar "+": prefill a specific column (the date) with a given value
+    pcol = request.args.get('prefill_col', type=int)
+    pval = request.args.get('prefill_val')
+    if pcol and pval:
+        prefill[pcol] = pval
     detail_cols = detail_columns_for(conn, columns, view_id)
     conn.close()
     return render_template('record_editor.html', table=dict(table), columns=detail_cols,
@@ -760,6 +787,10 @@ def bulk_records():
     ph = ','.join('?' * len(ids))
     if action == 'delete':
         conn.execute(f"UPDATE records SET deleted_at=? WHERE id IN ({ph})", [now] + ids)
+    elif action == 'archive':
+        conn.execute(f"UPDATE records SET archived=1 WHERE id IN ({ph})", ids)
+    elif action == 'unarchive':
+        conn.execute(f"UPDATE records SET archived=0 WHERE id IN ({ph})", ids)
     elif action == 'set_cell':
         cid = changes.get('column_id'); val = changes.get('value', '')
         for rid in ids:
@@ -1010,11 +1041,19 @@ def create_view():
     conn = get_db()
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     maxpos = conn.execute("SELECT COALESCE(MAX(position),0)+1 FROM views WHERE table_id=?", (table_id,)).fetchone()[0]
+    # Default sort for new views: pinned first, then most recently modified.
+    sorts = data.get('sorts')
+    if not sorts:
+        pin = conn.execute("SELECT id FROM columns WHERE table_id=? AND name='Pin' LIMIT 1", (table_id,)).fetchone()
+        sorts = []
+        if pin:
+            sorts.append({'c': pin['id'], 'd': 'desc'})
+        sorts.append({'c': '_updated_at', 'd': 'desc'})
     vid = conn.execute("""INSERT INTO views (table_id,name,view_type,filters_json,filter_logic,sorts_json,hidden_columns_json,date_column_id,position,created_at)
                           VALUES (?,?,?,?,?,?,?,?,?,?)""",
                        (table_id, data.get('name', 'New view'), data.get('view_type', 'grid'),
                         json.dumps(data.get('filters', [])), data.get('filter_logic', 'AND'),
-                        json.dumps(data.get('sorts', [])), json.dumps(data.get('hidden', [])),
+                        json.dumps(sorts), json.dumps(data.get('hidden', [])),
                         data.get('date_column_id'), maxpos, now)).lastrowid
     conn.commit()
     conn.close()
@@ -1118,6 +1157,7 @@ def search_page():
             columns = get_columns(conn, t['id'])
             recs = load_records(conn, t['id'])
             recs = apply_view(recs, columns, [], 'AND', [], q)
+            recs = [r for r in recs if not r['archived']]  # archived excluded from search
             if recs:
                 recs, _ = build_grid(conn, recs, columns)
                 pcol = primary_column(columns)

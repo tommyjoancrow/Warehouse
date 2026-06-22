@@ -4,7 +4,7 @@
 
 <div class="view-header">
     <div class="view-header-left">
-        <h1 class="view-title">Search results for “{{ query }}”</h1>
+        <h1 class="view-title">Search results for "{{ query }}"</h1>
         <span class="view-subtitle">{{ results|length }} match{{ '' if results|length == 1 else 'es' }}</span>
     </div>
 </div>
@@ -23,7 +23,7 @@
         </tbody>
     </table>
     {% else %}
-    <div class="empty-state"><div class="empty-icon">🔍</div><p>No results for “{{ query }}”.</p></div>
+    <div class="empty-state"><div class="empty-icon">🔍</div><p>No results for "{{ query }}".</p></div>
     {% endif %}
 </div>
 

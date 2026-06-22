@@ -23,13 +23,21 @@ COLUMN_TYPES = [
     ('percent', 'Percent'),
     ('tag', 'Tag list'),
     ('link', 'Link to record'),
+    ('backlinks', 'Backlinks'),
 ]
 COLUMN_TYPE_KEYS = [t[0] for t in COLUMN_TYPES]
 
 # Filter operators offered per type group (value, label)
 TEXT_OPS   = [('contains','contains'),('equals','is'),('not_contains','is not'),('starts_with','starts with'),('is_empty','is empty'),('is_not_empty','is not empty')]
 NUM_OPS    = [('eq','='),('ne','≠'),('gt','>'),('lt','<'),('gte','≥'),('lte','≤'),('is_empty','is empty'),('is_not_empty','is not empty')]
-DATE_OPS   = [('equals','is'),('before','before'),('after','after'),('is_empty','is empty'),('is_not_empty','is not empty')]
+DATE_OPS   = [('equals','is'),('before','is before'),('after','is after'),
+              ('is_today','is today'),
+              ('within_days','is within … days of today'),
+              ('next_days','is in the next … days'),
+              ('past_days','is in the last … days'),
+              ('overdue','is before today'),
+              ('upcoming','is today or later'),
+              ('is_empty','is empty'),('is_not_empty','is not empty')]
 CHECK_OPS  = [('is_true','is checked'),('is_false','is unchecked')]
 SELECT_OPS = [('equals','is'),('not_equals','is not'),('is_empty','is empty'),('is_not_empty','is not empty')]
 MULTI_OPS  = [('has_any','has any of'),('has_all','has all of'),('has_none','has none of'),('is_empty','is empty')]
@@ -43,6 +51,7 @@ def ops_for_type(t):
     if t == 'select': return SELECT_OPS
     if t in ('multiselect', 'tag'): return MULTI_OPS
     if t == 'link': return LINK_OPS
+    if t == 'backlinks': return []  # computed field — not filterable in views
     return TEXT_OPS
 
 OPS_BY_TYPE = {t: ops_for_type(t) for t in COLUMN_TYPE_KEYS}
@@ -108,6 +117,13 @@ CREATE TABLE IF NOT EXISTS views (
     position INTEGER DEFAULT 0,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    body TEXT DEFAULT '',
+    position INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL
+);
 """
 
 def init_db():
@@ -123,6 +139,10 @@ def init_db():
         conn.execute("ALTER TABLE views ADD COLUMN card_fields_json TEXT DEFAULT '[]'")
     if 'cal_fields_json' not in view_cols:
         conn.execute("ALTER TABLE views ADD COLUMN cal_fields_json TEXT DEFAULT '[]'")
+    if 'parent_id' not in view_cols:
+        conn.execute("ALTER TABLE views ADD COLUMN parent_id INTEGER DEFAULT NULL")
+    if 'icon' not in view_cols:
+        conn.execute("ALTER TABLE views ADD COLUMN icon TEXT DEFAULT ''")
     rec_cols = [r[1] for r in conn.execute("PRAGMA table_info(records)").fetchall()]
     if 'archived' not in rec_cols:
         conn.execute("ALTER TABLE records ADD COLUMN archived INTEGER DEFAULT 0")
@@ -133,7 +153,190 @@ def init_db():
     conn.commit()
     if conn.execute("SELECT COUNT(*) FROM tables").fetchone()[0] == 0:
         seed(conn)
+    _topup_samples(conn)
+    _ensure_auto_date_columns(conn)
+    if conn.execute("SELECT COUNT(*) FROM templates").fetchone()[0] == 0:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        defaults = [
+            ('Meeting notes', '<p><strong>Meeting</strong> — </p><p>Attendees: </p><p>Notes:</p><ul data-checked="false"><li>Discuss …</li></ul><p>Action items:</p><ul data-checked="false"><li>Follow up …</li></ul>'),
+            ('Call log', '<p><strong>Call</strong> — </p><p>Outcome: </p><p>Next step: </p>'),
+            ('Task checklist', '<ul data-checked="false"><li>First step</li></ul><ul data-checked="false"><li>Second step</li></ul><ul data-checked="false"><li>Third step</li></ul>'),
+        ]
+        for i, (nm, body) in enumerate(defaults):
+            conn.execute("INSERT INTO templates (name,body,position,created_at) VALUES (?,?,?,?)", (nm, body, i, now))
+        conn.commit()
     conn.close()
+
+def _auto_date_cols(conn, table_id):
+    """Return {'created': col_id, 'modified': col_id} for auto-managed date columns."""
+    out = {}
+    for c in conn.execute("SELECT id, options FROM columns WHERE table_id=?", (table_id,)).fetchall():
+        try:
+            o = json.loads(c['options'] or '{}')
+        except Exception:
+            o = {}
+        if isinstance(o, dict) and o.get('auto') in ('created', 'modified'):
+            out[o['auto']] = c['id']
+    return out
+
+def _ensure_auto_date_columns(conn):
+    """Make sure the workspace has auto Created/Modified date columns, and backfill
+    their values from record metadata where missing. Idempotent."""
+    t = conn.execute("SELECT id FROM tables ORDER BY id LIMIT 1").fetchone()
+    if not t:
+        return
+    tid = t['id']
+    have = _auto_date_cols(conn, tid)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    maxpos = conn.execute("SELECT COALESCE(MAX(position),0) FROM columns WHERE table_id=?", (tid,)).fetchone()[0]
+    def _mk(name, role):
+        nonlocal maxpos
+        maxpos += 1
+        return conn.execute("INSERT INTO columns (table_id,name,type,position,options,created_at) VALUES (?,?,?,?,?,?)",
+                            (tid, name, 'date', maxpos, json.dumps({'auto': role}), now)).lastrowid
+    if 'created' not in have:
+        have['created'] = _mk('Created', 'created')
+    if 'modified' not in have:
+        have['modified'] = _mk('Modified', 'modified')
+    # backfill missing cell values from record metadata
+    for r in conn.execute("SELECT id, created_at, updated_at FROM records WHERE table_id=? AND deleted_at IS NULL", (tid,)).fetchall():
+        for cid, meta in ((have['created'], r['created_at']), (have['modified'], r['updated_at'])):
+            if conn.execute("SELECT 1 FROM cell_values WHERE record_id=? AND column_id=?", (r['id'], cid)).fetchone():
+                continue
+            conn.execute("INSERT INTO cell_values (record_id,column_id,value) VALUES (?,?,?)",
+                         (r['id'], cid, (meta or now)[:10]))
+    conn.commit()
+
+def _topup_samples(conn):
+    """One-time injection of extra sample records into the existing workspace,
+    without disturbing any user data or views. Runs once (guarded by a flag).
+    Resolves columns by name with type-based fallbacks so renamed fields work."""
+    conn.execute("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT)")
+    FLAG = 'samples_v3'
+    if conn.execute("SELECT 1 FROM app_meta WHERE key=?", (FLAG,)).fetchone():
+        return
+    def _done():
+        conn.execute("INSERT OR REPLACE INTO app_meta (key,value) VALUES (?,?)", (FLAG, '1'))
+        conn.commit()
+    t = conn.execute("SELECT id FROM tables ORDER BY id LIMIT 1").fetchone()
+    if not t:
+        _done(); return
+    tid = t['id']
+    colrows = [dict(c) for c in conn.execute(
+        "SELECT id,name,type,position FROM columns WHERE table_id=? ORDER BY position, id", (tid,)).fetchall()]
+    by_name = {c['name']: c['id'] for c in colrows}
+    def first_type(*types):
+        for c in colrows:
+            if c['type'] in types:
+                return c['id']
+        return None
+    n   = by_name.get('Name') or (colrows[0]['id'] if colrows else None)
+    ty  = by_name.get('Type') or first_type('select')
+    st  = by_name.get('Status')
+    em  = by_name.get('Email') or first_type('email')
+    ph  = by_name.get('Phone') or first_type('phone')
+    web = by_name.get('Website') or first_type('url')
+    lk  = by_name.get('Linked to') or first_type('link')
+    due = by_name.get('Due Date') or first_type('date')
+    pri = by_name.get('Priority')
+    note = by_name.get('Notes') or by_name.get('Body') or first_type('longtext')
+    pin = by_name.get('Pin') or first_type('checkbox')
+    if not n or not ty:
+        _done(); return
+    # Idempotency guard: if a marker sample already exists, don't insert again
+    if conn.execute("SELECT 1 FROM cell_values WHERE column_id=? AND value=? LIMIT 1",
+                    (n, 'Umbrella Industries')).fetchone():
+        _done(); return
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    today = date.today()
+
+    def rec(cells):
+        rid = conn.execute("INSERT INTO records (table_id,created_at,updated_at) VALUES (?,?,?)",
+                           (tid, now, now)).lastrowid
+        for cid, val in cells.items():
+            if cid is None:
+                continue
+            conn.execute("INSERT INTO cell_values (record_id,column_id,value) VALUES (?,?,?)",
+                         (rid, cid, val))
+        return rid
+
+    def days(d):
+        return (today + timedelta(days=d)).isoformat()
+
+    # ── Companies ──
+    co = {}
+    companies = [
+        ('Umbrella Industries', 'Active',   'https://umbrella.example'),
+        ('Stark Solutions',     'Active',   'https://stark.example'),
+        ('Wayne Enterprises',   'Active',   'https://wayne.example'),
+        ('Wonka Foods',         'Lead',     'https://wonka.example'),
+        ('Cyberdyne Systems',   'Inactive', 'https://cyberdyne.example'),
+        ('Soylent Corp',        'Lead',     'https://soylent.example'),
+        ('Hooli',               'Active',   'https://hooli.example'),
+        ('Pied Piper',          'Active',   'https://piedpiper.example'),
+    ]
+    for i, (nm, status, w) in enumerate(companies):
+        cells = {n: nm, ty: 'Company', st: status, web: w,
+                 note: f'<p>Sample company <strong>{nm}</strong>.</p>'}
+        if pin and i == 0:
+            cells[pin] = '1'
+        co[nm] = rec(cells)
+
+    # ── People (linked to companies) ──
+    pe = {}
+    people = [
+        ('Dana Whitaker', 'dana@umbrella.example',  '555-0210', 'Umbrella Industries', 'Active',   'Met at trade show.'),
+        ('Evan Brooks',   'evan@stark.example',     '555-0222', 'Stark Solutions',      'Lead',     'Referred by Dana.'),
+        ('Fiona Adler',   'fiona@wayne.example',    '555-0234', 'Wayne Enterprises',    'Active',   'Decision maker.'),
+        ('George Pan',    'george@wonka.example',   '555-0246', 'Wonka Foods',          'Lead',     ''),
+        ('Hana Cole',     'hana@cyberdyne.example', '555-0258', 'Cyberdyne Systems',    'Inactive', 'No longer there?'),
+        ('Ivan Petrov',   'ivan@hooli.example',     '555-0260', 'Hooli',                'Active',   'Technical contact.'),
+        ('Jada Reyes',    'jada@piedpiper.example', '555-0272', 'Pied Piper',           'Active',   'Champion.'),
+        ('Karl Vogt',     'karl@soylent.example',   '555-0284', 'Soylent Corp',         'Lead',     ''),
+        ('Lena Ortiz',    'lena@stark.example',     '555-0296', 'Stark Solutions',      'Active',   'Procurement.'),
+        ('Marco Diaz',    'marco@hooli.example',    '555-0301', 'Hooli',                'Lead',     'Met via Ivan.'),
+    ]
+    for nm, e, p, comp, status, nt in people:
+        cells = {n: nm, ty: 'Person', em: e, ph: p, st: status}
+        if comp in co:
+            cells[lk] = json.dumps([co[comp]])
+        if nt:
+            cells[note] = f'<p>{nt}</p>'
+        pe[nm] = rec(cells)
+
+    # ── Tasks (linked to people/companies, varied dates/priorities) ──
+    tasks = [
+        ('Prepare Q3 deck for Wayne',  'In progress', 7,  'High',   'Fiona Adler'),
+        ('Call Evan re: pricing',      'To do',       1,  'High',   'Evan Brooks'),
+        ('Send NDA to Pied Piper',     'To do',       3,  'Medium', 'Jada Reyes'),
+        ('Follow up with Dana',        'To do',       2,  'Medium', 'Dana Whitaker'),
+        ('Renew Hooli contract',       'To do',       14, 'Low',    'Ivan Petrov'),
+        ('Demo for Stark Solutions',   'In progress', 5,  'High',   'Lena Ortiz'),
+        ('Close out Cyberdyne acct',   'Done',        -4, 'Low',    'Hana Cole'),
+        ('Draft proposal for Wonka',   'To do',       6,  'Medium', 'George Pan'),
+        ('Schedule onboarding call',   'To do',       4,  'Medium', 'Marco Diaz'),
+        ('Quarterly review',           'To do',       21, 'Low',    None),
+    ]
+    for i, (nm, status, d, p, person) in enumerate(tasks):
+        cells = {n: nm, ty: 'Task', st: status, due: days(d), pri: p}
+        if person and person in pe:
+            cells[lk] = json.dumps([pe[person]])
+        if pin and i == 1:
+            cells[pin] = '1'
+        rec(cells)
+
+    # ── Notes ──
+    notes = [
+        ('Onboarding checklist', '<p>Steps: <strong>1)</strong> intro call, <strong>2)</strong> scope, <strong>3)</strong> kickoff.</p>', 0),
+        ('Pricing tiers',        '<p>Starter, Pro, Enterprise. Revisit Enterprise discount policy.</p>', 0),
+        ('Conference recap',     '<p>Good leads from <em>Stark</em> and <em>Wayne</em>. Follow up within a week.</p>', -2),
+        ('Product ideas',        '<p>Backlinks view, calendar color-coding, saved filters per user.</p>', 0),
+        ('Competitor notes',     '<p>Hooli moving downmarket; Pied Piper strong on compression.</p>', 0),
+    ]
+    for nm, body, d in notes:
+        rec({n: nm, ty: 'Note', note: body, due: days(d)})
+
+    _done()
 
 def seed(conn):
     """One workspace table holding every record. 'Companies', 'People', etc. are
@@ -286,9 +489,25 @@ def cell_match(col_type, raw, op, fval):
         return {'eq': x==y, 'ne': x!=y, 'gt': x>y, 'lt': x<y, 'gte': x>=y, 'lte': x<=y}.get(op, False)
     elif col_type == 'date':
         if not raw: return False
-        if op == 'equals': return raw[:10] == fval
-        if op == 'before': return raw[:10] < (fval or '')
-        if op == 'after': return raw[:10] > (fval or '')
+        d = raw[:10]
+        if op == 'equals': return d == fval
+        if op == 'before': return d < (fval or '')
+        if op == 'after': return d > (fval or '')
+        today = date.today()
+        today_s = today.isoformat()
+        if op == 'is_today': return d == today_s
+        if op == 'overdue': return d < today_s
+        if op == 'upcoming': return d >= today_s
+        # relative ranges measured in days from today
+        try:
+            n = int(fval)
+            dd = date.fromisoformat(d)
+        except (ValueError, TypeError):
+            return False
+        delta = (dd - today).days
+        if op == 'within_days': return abs(delta) <= n
+        if op == 'next_days': return 0 <= delta <= n
+        if op == 'past_days': return 0 <= -delta <= n
     elif col_type == 'checkbox':
         truthy = raw in ('1','true','True')
         if op == 'is_true': return truthy
@@ -437,6 +656,67 @@ def format_cell(col, raw, link_names):
         return f"{raw}%" if raw else ''
     return raw
 
+def backlink_index(conn, table_id):
+    """Reverse-link index: target_record_id -> list of source record dicts.
+    A source 'links to' a target via any link-type column.
+    Returns (reverse, primary_id, col_by_id)."""
+    cols = get_columns(conn, table_id)
+    col_by_id = {c['id']: dict(c) for c in cols}
+    link_cols = [c for c in cols if c['type'] == 'link']
+    primary = primary_column(cols)
+    pid = primary['id'] if primary else None
+    reverse = {}
+    if not link_cols:
+        return reverse, pid, col_by_id
+    for src in load_records(conn, table_id):
+        if src.get('archived'):
+            continue
+        for lc in link_cols:
+            raw = src['cells'].get(lc['id'], '')
+            if not raw:
+                continue
+            try:
+                ids = json.loads(raw)
+            except Exception:
+                ids = []
+            for t in ids:
+                try:
+                    t = int(t)
+                except (ValueError, TypeError):
+                    continue
+                reverse.setdefault(t, []).append(src)
+    return reverse, pid, col_by_id
+
+def backlinks_for(reverse, pid, target_id, col, col_by_id=None):
+    """Records that link to target_id, optionally filtered by the column's config
+    (a full filter rule: field + operator + value, evaluated with cell_match)."""
+    col_by_id = col_by_id or {}
+    try:
+        opt = json.loads(col['options'] or '{}')
+        if isinstance(opt, list):
+            opt = {}
+    except Exception:
+        opt = {}
+    fcol = opt.get('filter_col')
+    fop = opt.get('filter_op') or 'equals'
+    fval = opt.get('filter_val')
+    try:
+        fcol = int(fcol) if fcol not in (None, '') else None
+    except (ValueError, TypeError):
+        fcol = None
+    ftype = (col_by_id.get(fcol) or {}).get('type', 'text') if fcol is not None else None
+    out, seen = [], set()
+    for src in reverse.get(target_id, []):
+        if src['id'] in seen:
+            continue
+        if fcol is not None:
+            if not cell_match(ftype, src['cells'].get(fcol, ''), fop, fval):
+                continue
+        seen.add(src['id'])
+        name = (src['cells'].get(pid, '') if pid else '') or ('Record ' + str(src['id']))
+        out.append({'id': src['id'], 'name': name})
+    return out
+
 def build_grid(conn, recs, columns):
     """Attach display values; resolve link names."""
     # gather all linked record ids
@@ -454,13 +734,36 @@ def build_grid(conn, recs, columns):
     for rec in recs:
         disp = {}
         for c in columns:
-            disp[c['id']] = format_cell(c, rec['cells'].get(c['id'], ''), link_names)
+            if c['type'] == 'link':
+                try:
+                    ids = json.loads(rec['cells'].get(c['id'], '') or '[]')
+                except Exception:
+                    ids = []
+                disp[c['id']] = [{'id': int(i), 'name': link_names.get(int(i), 'Record ' + str(i))} for i in ids]
+            else:
+                disp[c['id']] = format_cell(c, rec['cells'].get(c['id'], ''), link_names)
         rec['display'] = disp
+    # Computed backlinks
+    back_cols = [c for c in columns if c['type'] == 'backlinks']
+    if back_cols and recs:
+        reverse, pid, cbi = backlink_index(conn, columns[0]['table_id'])
+        for rec in recs:
+            for bc in back_cols:
+                rec['display'][bc['id']] = backlinks_for(reverse, pid, rec['id'], bc, cbi)
     return recs, link_names
 
 # ── Context (sidebar) ───────────────────────────────────────────
 def workspace_table(conn):
     return conn.execute("SELECT * FROM tables ORDER BY id LIMIT 1").fetchone()
+
+def _build_view_tree_flat(views, parent_id=None, depth=0):
+    result = []
+    for v in views:
+        if v.get('parent_id') == parent_id:
+            children = _build_view_tree_flat(views, v['id'], depth + 1)
+            result.append(dict(v, depth=depth, has_children=bool(children)))
+            result.extend(children)
+    return result
 
 @app.context_processor
 def inject_sidebar():
@@ -473,7 +776,8 @@ def inject_sidebar():
             "SELECT * FROM views WHERE table_id=? ORDER BY position, id", (ws['id'],)).fetchall()]
         total = conn.execute("SELECT COUNT(*) FROM records WHERE table_id=? AND deleted_at IS NULL", (ws['id'],)).fetchone()[0]
     conn.close()
-    return dict(workspace=(dict(ws) if ws else None), sidebar_views=views,
+    sidebar_views = _build_view_tree_flat(views)
+    return dict(workspace=(dict(ws) if ws else None), sidebar_views=sidebar_views,
                 workspace_total=total, all_tables=([dict(ws)] if ws else []),
                 column_types=COLUMN_TYPES, ops_by_type=OPS_BY_TYPE)
 
@@ -497,6 +801,12 @@ def index():
 def _render_table(conn, table, view):
     columns = get_columns(conn, table['id'])
     vt, filters, logic, sorts, hidden, search = parse_params(view)
+    sorts_raw = list(sorts)  # what the user actually has (pre-fallback) — for dirty check
+    # Every view auto-sorts: default to Pin first, then most recently modified.
+    if not sorts:
+        pin_c = next((c for c in columns if c['name'] == 'Pin'), None) \
+            or next((c for c in columns if c['type'] == 'checkbox'), None)
+        sorts = ([{'c': pin_c['id'], 'd': 'desc'}] if pin_c else []) + [{'c': '_updated_at', 'd': 'desc'}]
     show_archived = request.args.get('archived') == '1'
     recs = load_records(conn, table['id'])
     recs = apply_view(recs, columns, filters, logic, sorts, search)
@@ -528,29 +838,64 @@ def _render_table(conn, table, view):
     primary = primary_column(columns)
     # which columns appear in the detail view when opening a record from here
     detail_field_ids = []
+    detail_mode = 'crm'
+    detail_collapsed = False
     if view and view['detail_fields_json']:
         try:
-            detail_field_ids = json.loads(view['detail_fields_json'])
+            raw = json.loads(view['detail_fields_json'])
+            if isinstance(raw, list):
+                detail_field_ids = raw
+            else:
+                detail_field_ids = raw.get('fields', [])
+                detail_mode = raw.get('mode', 'crm')
+                detail_collapsed = bool(raw.get('collapsed', False))
         except Exception:
             detail_field_ids = []
     card_field_ids = []
-    if view and view.get('card_fields_json'):
+    if view:
         try:
-            card_field_ids = json.loads(view['card_fields_json'])
+            card_field_ids = json.loads(view['card_fields_json'] or '[]')
         except Exception:
             card_field_ids = []
     cal_field_ids = []
-    if view and view.get('cal_fields_json'):
+    if view:
         try:
-            cal_field_ids = json.loads(view['cal_fields_json'])
+            cal_field_ids = json.loads(view['cal_fields_json'] or '[]')
         except Exception:
             cal_field_ids = []
+    # Are there unsaved changes vs the saved view? (drives the "Save" menu items)
+    view_dirty = False
+    if view:
+        saved_vt = view['view_type'] or 'grid'
+        saved_logic = view['filter_logic'] or 'AND'
+        try:
+            saved_filters = json.loads(view['filters_json'] or '[]')
+        except Exception:
+            saved_filters = []
+        if saved_filters and isinstance(saved_filters[0], dict) and 'rules' not in saved_filters[0]:
+            saved_filters = [{'logic': saved_logic, 'rules': saved_filters}]
+        try:
+            saved_sorts = json.loads(view['sorts_json'] or '[]')
+        except Exception:
+            saved_sorts = []
+        try:
+            saved_hidden = set(int(h) for h in json.loads(view['hidden_columns_json'] or '[]'))
+        except Exception:
+            saved_hidden = set()
+        def _norm(x):
+            return json.dumps(x, sort_keys=True)
+        if (vt != saved_vt
+                or _norm(filters) != _norm(saved_filters)
+                or _norm(sorts_raw) != _norm(saved_sorts)
+                or hidden_set != saved_hidden):
+            view_dirty = True
     date_columns = [c for c in columns if c['type'] == 'date']
     # calendar date column + month grid
     date_col_id = None
     cal_weeks = None
     cal_month_label = None
     cal_prev = cal_next = None
+    cal_mode = 'month'
     if vt == 'calendar':
         req_dc = request.args.get('date_col', type=int)
         if req_dc:
@@ -560,18 +905,19 @@ def _render_table(conn, table, view):
         else:
             date_col_id = date_columns[0]['id'] if date_columns else None
         if date_col_id:
-            cal_weeks, cal_month_label, cal_prev, cal_next = build_calendar(recs, date_col_id, primary, columns, cal_field_ids)
+            cal_weeks, cal_month_label, cal_prev, cal_next, cal_mode = build_calendar(recs, date_col_id, primary, columns, cal_field_ids)
     return render_template('table_view.html',
         table=table, columns=columns, visible_columns=visible_columns,
         records=recs, link_names=link_names, primary=primary,
         view=view, views=views, view_type=vt,
         filters=filters, filter_logic=logic, sorts=sorts, hidden=list(hidden_set),
         search=search, date_col_id=date_col_id, date_columns=date_columns,
-        detail_field_ids=detail_field_ids,
+        detail_field_ids=detail_field_ids, detail_mode=detail_mode, detail_collapsed=detail_collapsed,
         card_field_ids=card_field_ids, cal_field_ids=cal_field_ids,
         show_archived=show_archived, archived_count=archived_count,
-        cal_weeks=cal_weeks, cal_month_label=cal_month_label, cal_prev=cal_prev, cal_next=cal_next,
+        cal_weeks=cal_weeks, cal_month_label=cal_month_label, cal_prev=cal_prev, cal_next=cal_next, cal_mode=cal_mode,
         page_title=(view['name'] if view else table['name']),
+        view_dirty=view_dirty,
         active_table_id=table['id'], active_view_id=(view['id'] if view else None))
 
 def build_calendar(recs, date_col_id, primary, all_columns=None, cal_field_ids=None):
@@ -603,26 +949,42 @@ def build_calendar(recs, date_col_id, primary, all_columns=None, cal_field_ids=N
             for ec in extra_cols:
                 val = r['display'].get(ec['id'], '')
                 if val and val != '—':
-                    extras.append(str(val) if not isinstance(val, list) else ', '.join(val))
+                    if isinstance(val, list):
+                        parts = [(x['name'] if isinstance(x, dict) else str(x)) for x in val]
+                        extras.append(', '.join(parts))
+                    else:
+                        extras.append(str(val))
             by_date.setdefault(dv, []).append({'id': r['id'], 'label': label, 'extras': extras})
-    cal = cal_module.Calendar(firstweekday=6)  # Sunday first
+    mode = 'week' if request.args.get('cal') == 'week' else 'month'
     weeks = []
-    for week in cal.monthdatescalendar(year, month):
-        wk = []
-        for d in week:
-            ds = d.isoformat()
-            wk.append({
-                'day': d.day,
-                'date': ds,
-                'in_month': d.month == month,
-                'is_today': d == today,
-                'records': by_date.get(ds, []),
-            })
+    def day_cell(d, in_month=True):
+        ds = d.isoformat()
+        return {'day': d.day, 'date': ds, 'in_month': in_month,
+                'is_today': d == today, 'records': by_date.get(ds, [])}
+    if mode == 'week':
+        wd = request.args.get('wd')
+        try:
+            ref = date.fromisoformat(wd) if wd else today
+        except ValueError:
+            ref = today
+        start = ref - timedelta(days=(ref.weekday() + 1) % 7)  # back up to Sunday
+        wk = [day_cell(start + timedelta(days=i)) for i in range(7)]
         weeks.append(wk)
+        end = start + timedelta(days=6)
+        if start.month == end.month:
+            label = "{} {} – {}, {}".format(start.strftime('%b'), start.day, end.day, end.year)
+        else:
+            label = "{} {} – {} {}, {}".format(start.strftime('%b'), start.day, end.strftime('%b'), end.day, end.year)
+        prev = (start - timedelta(days=7)).isoformat()
+        nxt = (start + timedelta(days=7)).isoformat()
+        return weeks, label, prev, nxt, mode
+    cal = cal_module.Calendar(firstweekday=6)  # Sunday first
+    for week in cal.monthdatescalendar(year, month):
+        weeks.append([day_cell(d, d.month == month) for d in week])
     month_label = date(year, month, 1).strftime('%B %Y')
     prev_m = (date(year, month, 1) - timedelta(days=1))
     next_m = (date(year, month, 28) + timedelta(days=10))
-    return weeks, month_label, f"{prev_m.year}-{prev_m.month:02d}", f"{next_m.year}-{next_m.month:02d}"
+    return weeks, month_label, f"{prev_m.year}-{prev_m.month:02d}", f"{next_m.year}-{next_m.month:02d}", mode
 
 @app.route("/table/<int:table_id>")
 def table_view(table_id):
@@ -647,6 +1009,28 @@ def view_page(view_id):
     conn.close()
     return out
 
+def view_equality_prefills(filters_json):
+    """Columns a view pins via an equality filter (e.g. Type = Task), so new
+    records created from that view self-label. Handles flat and grouped formats."""
+    out = {}
+    try:
+        raw = json.loads(filters_json or '[]')
+    except Exception:
+        return out
+    rules = []
+    if raw and isinstance(raw[0], dict) and 'rules' in raw[0]:
+        for g in raw:
+            rules += g.get('rules') or []
+    else:
+        rules = raw
+    for f in rules:
+        if f.get('op') in ('equals', 'is') and f.get('v') not in (None, ''):
+            try:
+                out[int(f['c'])] = f['v']
+            except (ValueError, TypeError, KeyError):
+                pass
+    return out
+
 # ── Routes: record detail ───────────────────────────────────────
 @app.route("/record/new")
 def new_record_form():
@@ -664,22 +1048,32 @@ def new_record_form():
     if view_id:
         v = conn.execute("SELECT * FROM views WHERE id=?", (view_id,)).fetchone()
         if v:
-            try:
-                for f in json.loads(v['filters_json']):
-                    if f.get('op') in ('equals', 'is') and f.get('v') != '':
-                        prefill[int(f['c'])] = f['v']
-            except Exception:
-                pass
+            prefill = view_equality_prefills(v['filters_json'])
     # calendar "+": prefill a specific column (the date) with a given value
     pcol = request.args.get('prefill_col', type=int)
     pval = request.args.get('prefill_val')
     if pcol and pval:
         prefill[pcol] = pval
     detail_cols = detail_columns_for(conn, columns, view_id)
+    back_view = None
+    detail_mode = 'crm'
+    detail_collapsed = False
+    if view_id:
+        vrow = conn.execute("SELECT * FROM views WHERE id=?", (view_id,)).fetchone()
+        if vrow:
+            back_view = dict(vrow)
+            try:
+                raw = json.loads(vrow['detail_fields_json'] or '[]')
+                if isinstance(raw, dict):
+                    detail_mode = raw.get('mode', 'crm')
+                    detail_collapsed = bool(raw.get('collapsed', False))
+            except Exception:
+                pass
     conn.close()
     return render_template('record_editor.html', table=dict(table), columns=detail_cols,
                            record=None, cells=prefill, link_display={}, view_id=view_id,
-                           active_table_id=table_id, page_title='New record')
+                           back_view=back_view, detail_mode=detail_mode, detail_collapsed=detail_collapsed,
+                           backlinks={}, ops_by_type=OPS_BY_TYPE, active_table_id=table_id, page_title='New record')
 
 def detail_columns_for(conn, all_columns, view_id):
     """Columns to show in the detail editor when opened from a given view.
@@ -692,7 +1086,8 @@ def detail_columns_for(conn, all_columns, view_id):
     if not v or not v['detail_fields_json']:
         return all_columns
     try:
-        ids = json.loads(v['detail_fields_json'])
+        raw = json.loads(v['detail_fields_json'])
+        ids = raw if isinstance(raw, list) else raw.get('fields', [])
     except Exception:
         ids = []
     if not ids:
@@ -728,16 +1123,39 @@ def record_detail(record_id):
             except Exception:
                 pass
     link_display = primary_values(conn, linked_ids) if linked_ids else {}
+    back_view = None
+    detail_mode = 'crm'
+    detail_collapsed = False
+    if view_id:
+        vrow = conn.execute("SELECT * FROM views WHERE id=?", (view_id,)).fetchone()
+        if vrow:
+            back_view = dict(vrow)
+            try:
+                raw = json.loads(vrow['detail_fields_json'] or '[]')
+                if isinstance(raw, dict):
+                    detail_mode = raw.get('mode', 'crm')
+                    detail_collapsed = bool(raw.get('collapsed', False))
+            except Exception:
+                pass
+    backlinks = {}
+    back_cols = [c for c in columns if c['type'] == 'backlinks']
+    if back_cols:
+        reverse, pid, cbi = backlink_index(conn, rec['table_id'])
+        for bc in back_cols:
+            backlinks[bc['id']] = backlinks_for(reverse, pid, record_id, bc, cbi)
     conn.close()
     return render_template('record_editor.html', table=dict(table), columns=columns,
                            record=dict(rec), cells=cells, link_display=link_display, view_id=view_id,
-                           active_table_id=rec['table_id'],
+                           back_view=back_view, detail_mode=detail_mode, detail_collapsed=detail_collapsed,
+                           backlinks=backlinks, ops_by_type=OPS_BY_TYPE, active_table_id=rec['table_id'],
                            page_title='Record')
 
 def _save_cells(conn, record_id, columns, form, only_ids=None):
     for c in columns:
         if only_ids is not None and c['id'] not in only_ids:
             continue  # field wasn't shown in this editor; leave its value alone
+        if c['type'] == 'backlinks':
+            continue  # computed field — nothing to store
         key = f"col_{c['id']}"
         if c['type'] == 'checkbox':
             val = '1' if form.get(key) else '0'
@@ -764,17 +1182,51 @@ def save_record():
     conn = get_db()
     columns = get_columns(conn, table_id)
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    today = date.today().isoformat()
+    is_new = not record_id
+    # capture auto-date columns and their prior values (to detect manual edits)
+    autos = _auto_date_cols(conn, table_id)
+    prev_auto = {}
+    if not is_new:
+        for role, cid in autos.items():
+            row = conn.execute("SELECT value FROM cell_values WHERE record_id=? AND column_id=?", (record_id, cid)).fetchone()
+            prev_auto[role] = row['value'] if row else None
     if not record_id:
         record_id = conn.execute("INSERT INTO records (table_id,created_at,updated_at) VALUES (?,?,?)",
                                  (table_id, now, now)).lastrowid
     else:
         conn.execute("UPDATE records SET updated_at=? WHERE id=?", (now, record_id))
     _save_cells(conn, record_id, columns, request.form, only_ids=only_ids)
+    # Auto Created/Modified (auto-populate, but keep any value the user typed manually)
+    def _set_cell(cid, val):
+        conn.execute("INSERT OR REPLACE INTO cell_values (record_id,column_id,value) VALUES (?,?,?)", (record_id, cid, val))
+    if 'created' in autos:
+        cid = autos['created']; sub = request.form.get('col_%d' % cid)
+        if is_new:
+            _set_cell(cid, sub if sub else today)
+    if 'modified' in autos:
+        cid = autos['modified']; sub = request.form.get('col_%d' % cid)
+        if is_new:
+            _set_cell(cid, sub if sub else today)
+        else:
+            user_changed = sub not in (None, '') and sub != prev_auto.get('modified')
+            if not user_changed:
+                _set_cell(cid, today)
+    # New record from a view: apply the view's equality filters (e.g. Type=Task)
+    # so it self-labels and lands in that view, even if those fields weren't shown.
+    if is_new and view_id:
+        v = conn.execute("SELECT filters_json FROM views WHERE id=?", (view_id,)).fetchone()
+        if v:
+            for cid, val in view_equality_prefills(v['filters_json']).items():
+                if only_ids is None or cid not in only_ids:
+                    conn.execute("INSERT OR REPLACE INTO cell_values (record_id, column_id, value) VALUES (?,?,?)",
+                                 (record_id, cid, val))
     conn.commit()
     conn.close()
+    # Save and close → back to the list
     if view_id:
-        return redirect(url_for('record_detail', record_id=record_id, view=view_id))
-    return redirect(url_for('record_detail', record_id=record_id))
+        return redirect(url_for('view_page', view_id=view_id))
+    return redirect(url_for('table_view', table_id=table_id))
 
 @app.route("/record/<int:record_id>/autosave", methods=["POST"])
 def autosave_record(record_id):
@@ -785,10 +1237,17 @@ def autosave_record(record_id):
         conn.close()
         return jsonify({"ok": False}), 404
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    edited = set()
     for col_id, val in (data.get('cells') or {}).items():
         conn.execute("INSERT OR REPLACE INTO cell_values (record_id, column_id, value) VALUES (?,?,?)",
                      (record_id, int(col_id), val))
+        edited.add(int(col_id))
     conn.execute("UPDATE records SET updated_at=? WHERE id=?", (now, record_id))
+    # bump the auto Modified field unless the user just edited it themselves
+    autos = _auto_date_cols(conn, rec['table_id'])
+    if 'modified' in autos and autos['modified'] not in edited:
+        conn.execute("INSERT OR REPLACE INTO cell_values (record_id,column_id,value) VALUES (?,?,?)",
+                     (record_id, autos['modified'], date.today().isoformat()))
     conn.commit()
     conn.close()
     return jsonify({"ok": True})
@@ -830,6 +1289,24 @@ def delete_record(record_id):
     tid = rec['table_id'] if rec else None
     conn.close()
     return redirect(url_for('table_view', table_id=tid) if tid else url_for('index'))
+
+@app.route("/record/<int:record_id>/archive", methods=["POST"])
+def archive_record(record_id):
+    view_id = request.form.get('view_id', type=int)
+    conn = get_db()
+    rec = conn.execute("SELECT archived FROM records WHERE id=?", (record_id,)).fetchone()
+    new_val = 0 if (rec and rec['archived']) else 1
+    table_id = None
+    if not view_id:
+        r2 = conn.execute("SELECT table_id FROM records WHERE id=?", (record_id,)).fetchone()
+        table_id = r2['table_id'] if r2 else None
+    conn.execute("UPDATE records SET archived=? WHERE id=?", (new_val, record_id))
+    conn.commit()
+    conn.close()
+    # Jump back to the list after archiving
+    if view_id:
+        return redirect(url_for('view_page', view_id=view_id))
+    return redirect(url_for('table_view', table_id=table_id) if table_id else url_for('index'))
 
 @app.route("/api/records/bulk", methods=["POST"])
 def bulk_records():
@@ -925,6 +1402,10 @@ def add_column_route(table_id):
         options = [o.strip() for o in raw.split(',') if o.strip()]
     elif ctype == 'link':
         options = {'target_table_id': table_id}  # one workspace: links point within it
+    elif ctype == 'backlinks':
+        options = {'filter_col': request.form.get('bl_field') or '',
+                   'filter_op': request.form.get('bl_op') or 'equals',
+                   'filter_val': (request.form.get('bl_val') or '').strip()}
     view_id = request.form.get('view_id', type=int)
     after_id = request.form.get('after_column_id', type=int)
     conn = get_db()
@@ -986,6 +1467,10 @@ def update_column(column_id):
             options = [o.strip() for o in raw.split(',') if o.strip()]
     elif ctype == 'link':
         options = {'target_table_id': col['table_id']}
+    elif ctype == 'backlinks':
+        options = {'filter_col': request.form.get('bl_field') or '',
+                   'filter_op': request.form.get('bl_op') or 'equals',
+                   'filter_val': (request.form.get('bl_val') or '').strip()}
     conn.execute("UPDATE columns SET name=?, type=?, options=? WHERE id=?",
                  (name, ctype, json.dumps(options), column_id))
     conn.commit()
@@ -1073,9 +1558,24 @@ def view_reorder(view_id):
 def view_detail_fields(view_id):
     """Save which fields (and order) show in the detail view for this view."""
     data = request.get_json() or {}
+    mode = data.get('mode')
+    collapsed = data.get('collapsed')
     conn = get_db()
+    if 'fields' not in data:
+        # Mode/collapsed-only update — preserve the existing field list
+        v = conn.execute("SELECT detail_fields_json FROM views WHERE id=?", (view_id,)).fetchone()
+        try:
+            current = json.loads(v['detail_fields_json'] or '[]') if v else []
+        except Exception:
+            current = []
+        payload = {'fields': current} if isinstance(current, list) else dict(current)
+    else:
+        payload = {'fields': data.get('fields', [])}
+    payload['mode'] = mode if mode else payload.get('mode', 'crm')
+    if collapsed is not None:
+        payload['collapsed'] = bool(collapsed)
     conn.execute("UPDATE views SET detail_fields_json=? WHERE id=?",
-                 (json.dumps(data.get('fields', [])), view_id))
+                 (json.dumps(payload), view_id))
     conn.commit()
     conn.close()
     return jsonify({"ok": True})
@@ -1099,6 +1599,35 @@ def view_cal_fields(view_id):
     conn.commit()
     conn.close()
     return jsonify({"ok": True})
+
+@app.route("/api/views/<int:vid>/move", methods=["POST"])
+def move_view(vid):
+    data = request.get_json() or {}
+    parent_id = data.get('parent_id')  # None = root
+    after_id = data.get('after_id')
+    before_id = data.get('before_id')
+    conn = get_db()
+    v = conn.execute("SELECT * FROM views WHERE id=?", (vid,)).fetchone()
+    if not v:
+        conn.close()
+        return jsonify(ok=False), 404
+    conn.execute("UPDATE views SET parent_id=? WHERE id=?", (parent_id, vid))
+    siblings = [dict(s) for s in conn.execute(
+        "SELECT id FROM views WHERE table_id=? AND parent_id IS ? AND id!=? ORDER BY position, id",
+        (v['table_id'], parent_id, vid)
+    ).fetchall()]
+    if after_id:
+        idx = next((i + 1 for i, s in enumerate(siblings) if s['id'] == after_id), len(siblings))
+    elif before_id:
+        idx = next((i for i, s in enumerate(siblings) if s['id'] == before_id), 0)
+    else:
+        idx = len(siblings)
+    new_order = siblings[:idx] + [{'id': vid}] + siblings[idx:]
+    for i, s in enumerate(new_order):
+        conn.execute("UPDATE views SET position=? WHERE id=?", (i, s['id']))
+    conn.commit()
+    conn.close()
+    return jsonify(ok=True)
 
 @app.route("/api/views/<int:view_id>/set-date-column", methods=["POST"])
 def view_set_date_column(view_id):
@@ -1158,7 +1687,9 @@ def update_view(view_id):
 @app.route("/api/views/<int:view_id>/rename", methods=["POST"])
 def rename_view(view_id):
     conn = get_db()
-    conn.execute("UPDATE views SET name=? WHERE id=?", (request.form.get('name', 'View'), view_id))
+    icon = (request.form.get('icon') or '').strip()
+    conn.execute("UPDATE views SET name=?, icon=? WHERE id=?",
+                 (request.form.get('name', 'View'), icon, view_id))
     conn.commit()
     conn.close()
     return redirect(request.referrer or url_for('view_page', view_id=view_id))
@@ -1172,6 +1703,57 @@ def delete_view(view_id):
     tid = v['table_id'] if v else None
     conn.close()
     return redirect(url_for('table_view', table_id=tid) if tid else url_for('index'))
+
+# ── Templates (autofill snippets) + Settings ────────────────────
+@app.route("/settings")
+def settings_page():
+    conn = get_db()
+    templates = [dict(t) for t in conn.execute(
+        "SELECT * FROM templates ORDER BY position, id").fetchall()]
+    conn.close()
+    return render_template('settings.html', templates=templates,
+                           active_page='settings', page_title='Settings')
+
+@app.route("/api/templates")
+def api_templates():
+    conn = get_db()
+    rows = [dict(t) for t in conn.execute("SELECT id,name,body FROM templates ORDER BY position, id").fetchall()]
+    conn.close()
+    return jsonify(rows)
+
+@app.route("/api/templates", methods=["POST"])
+def create_template():
+    data = request.get_json() or {}
+    conn = get_db()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    maxpos = conn.execute("SELECT COALESCE(MAX(position),0)+1 FROM templates").fetchone()[0]
+    tid = conn.execute("INSERT INTO templates (name,body,position,created_at) VALUES (?,?,?,?)",
+                       (data.get('name', 'Untitled template'), data.get('body', ''), maxpos, now)).lastrowid
+    conn.commit()
+    conn.close()
+    return jsonify(ok=True, id=tid)
+
+@app.route("/api/templates/<int:tid>/update", methods=["POST"])
+def update_template(tid):
+    data = request.get_json() or {}
+    conn = get_db()
+    cur = conn.execute("SELECT * FROM templates WHERE id=?", (tid,)).fetchone()
+    if not cur:
+        conn.close()
+        return jsonify(ok=False), 404
+    conn.execute("UPDATE templates SET name=?, body=? WHERE id=?",
+                 (data.get('name', cur['name']), data.get('body', cur['body']), tid))
+    conn.commit()
+    conn.close()
+    return jsonify(ok=True)
+
+@app.route("/api/templates/<int:tid>/delete", methods=["POST"])
+def delete_template(tid):
+    conn = get_db()
+    conn.execute("DELETE FROM templates WHERE id=?", (tid,))
+    conn.commit()
+    conn.close()
+    return jsonify(ok=True)
 
 # ── Calendar (uses a view's/table's date column) ────────────────
 @app.route("/calendar")
@@ -1221,6 +1803,33 @@ def purge_record(record_id):
     conn.commit()
     conn.close()
     return redirect(url_for('trash'))
+
+@app.route("/archive")
+def archive_page():
+    conn = get_db()
+    rows = conn.execute("""SELECT r.*, t.name as table_name, t.icon as table_icon
+                           FROM records r JOIN tables t ON r.table_id=t.id
+                           WHERE r.archived=1 AND r.deleted_at IS NULL ORDER BY r.updated_at DESC""").fetchall()
+    items = []
+    for r in rows:
+        pcol = conn.execute("SELECT id FROM columns WHERE table_id=? ORDER BY position, id LIMIT 1", (r['table_id'],)).fetchone()
+        label = ''
+        if pcol:
+            cv = conn.execute("SELECT value FROM cell_values WHERE record_id=? AND column_id=?", (r['id'], pcol['id'])).fetchone()
+            label = cv['value'] if cv else ''
+        items.append({'id': r['id'], 'label': label or f"Record {r['id']}",
+                      'table_name': r['table_name'], 'table_icon': r['table_icon'],
+                      'updated_at': r['updated_at']})
+    conn.close()
+    return render_template('archive.html', items=items, active_page='archive')
+
+@app.route("/record/<int:record_id>/unarchive", methods=["POST"])
+def unarchive_record(record_id):
+    conn = get_db()
+    conn.execute("UPDATE records SET archived=0 WHERE id=?", (record_id,))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('archive_page'))
 
 # ── Search ──────────────────────────────────────────────────────
 @app.route("/search")

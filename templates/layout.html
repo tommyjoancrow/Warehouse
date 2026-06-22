@@ -30,21 +30,34 @@
                 </div>
 
                 {% for v in sidebar_views %}
-                <div class="nav-item-row">
-                    <a href="/view/{{ v.id }}"
-                       class="nav-item nav-saved-view {% if active_view_id is defined and active_view_id == v.id %}active{% endif %}">
-                        <span class="nav-icon">{% if v.view_type == 'calendar' %}📅{% elif v.view_type == 'card' %}🃏{% else %}▦{% endif %}</span>
-                        <span class="nav-label">{{ v.name }}</span>
-                    </a>
-                    <div class="nav-more-wrap">
-                        <button class="nav-more-btn" onclick="toggleSidebarMenu(event,'vm-{{ v.id }}')">···</button>
-                        <div class="sidebar-menu hidden" id="vm-{{ v.id }}">
-                            <div class="sidebar-menu-item" onclick="openRenameView({{ v.id }}, '{{ v.name | replace("'", "\\'") }}')">✎ Rename</div>
-                            <a href="/view/{{ v.id }}?open=detail_layout" class="sidebar-menu-item">🗂 Detail layout</a>
-                            <div class="sidebar-menu-divider"></div>
-                            <form method="post" action="/api/views/{{ v.id }}/delete" onsubmit="return confirm('Delete this view? (Your records are not deleted.)')">
-                                <button type="submit" class="sidebar-menu-item sidebar-menu-danger">🗑 Delete view</button>
-                            </form>
+                <div class="nav-view-wrap {% if v.depth > 0 %}nav-child{% endif %}" data-view-id="{{ v.id }}" data-parent="{{ v.parent_id or '' }}">
+                    <div class="nav-item-row" draggable="true"
+                         ondragstart="sidebarDragStart(event, {{ v.id }}, {{ v.parent_id or 'null' }})"
+                         ondragend="sidebarDragEnd(event)"
+                         ondragover="sidebarDragOver(event, {{ v.id }}, {{ v.parent_id or 'null' }})"
+                         ondragleave="sidebarDragLeave(event)"
+                         ondrop="sidebarDrop(event, {{ v.id }}, {{ v.parent_id or 'null' }})">
+                        <span style="width:{{ v.depth * 12 }}px;flex-shrink:0;display:inline-block"></span>
+                        {% if v.has_children %}
+                        <button class="nav-expand-btn" type="button" onclick="event.preventDefault();toggleNavExpand({{ v.id }},this)">▾</button>
+                        {% else %}
+                        <span class="nav-expand-spacer"></span>
+                        {% endif %}
+                        <a href="/view/{{ v.id }}"
+                           class="nav-item nav-saved-view {% if active_view_id is defined and active_view_id == v.id %}active{% endif %}">
+                            <span class="nav-icon">{% if v.icon %}{{ v.icon }}{% elif v.view_type == 'calendar' %}📅{% elif v.view_type == 'card' %}🃏{% else %}▦{% endif %}</span>
+                            <span class="nav-label">{{ v.name }}</span>
+                        </a>
+                        <div class="nav-more-wrap">
+                            <button class="nav-more-btn" onclick="toggleSidebarMenu(event,'vm-{{ v.id }}')">···</button>
+                            <div class="sidebar-menu hidden" id="vm-{{ v.id }}">
+                                <div class="sidebar-menu-item" onclick="openRenameView({{ v.id }}, '{{ v.name | replace("'", "\\'") }}', '{{ v.icon }}')">✎ Rename</div>
+                                <a href="/view/{{ v.id }}?open=detail_layout" class="sidebar-menu-item">🗂 Detail layout</a>
+                                <div class="sidebar-menu-divider"></div>
+                                <form method="post" action="/api/views/{{ v.id }}/delete" onsubmit="return confirm('Delete this view? (Your records are not deleted.)')">
+                                    <button type="submit" class="sidebar-menu-item sidebar-menu-danger">🗑 Delete view</button>
+                                </form>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -52,6 +65,12 @@
             </div>
 
             <div class="nav-section nav-section-bottom">
+                <a href="/settings" class="nav-item {% if active_page is defined and active_page == 'settings' %}active{% endif %}">
+                    <span class="nav-icon">⚙</span><span class="nav-label">Settings</span>
+                </a>
+                <a href="/archive" class="nav-item {% if active_page is defined and active_page == 'archive' %}active{% endif %}">
+                    <span class="nav-icon">📥</span><span class="nav-label">Archive</span>
+                </a>
                 <a href="/trash" class="nav-item {% if active_page is defined and active_page == 'trash' %}active{% endif %}">
                     <span class="nav-icon">🗑</span><span class="nav-label">Trash</span>
                 </a>
@@ -68,8 +87,24 @@
 <div class="modal-overlay hidden" id="modal-overlay" onclick="closeModals()"></div>
 
 <div class="modal hidden" id="modal-rename-view">
-    <div class="modal-header"><h3>Rename View</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
+    <div class="modal-header"><h3>Edit View</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
     <form id="rename-view-form" action="" method="post">
+        <div class="form-group">
+            <label>Emoji</label>
+            <div class="emoji-row">
+                <div class="emoji-input-col">
+                    <input type="text" name="icon" id="rename-view-icon" class="form-input emoji-input" placeholder="–">
+                    <span class="emoji-kbd">press <b>Win</b> + <b>.</b></span>
+                </div>
+                <div class="emoji-quickpick">
+                    {% set seen = [] %}
+                    {% for v in sidebar_views %}{% if v.icon and v.icon not in seen %}{% set _ = seen.append(v.icon) %}
+                    <button type="button" class="emoji-pick" onclick="pickViewEmoji('{{ v.icon }}')">{{ v.icon }}</button>
+                    {% endif %}{% endfor %}
+                    {% if seen %}<button type="button" class="emoji-pick emoji-clear" onclick="pickViewEmoji('')" title="No emoji">✕</button>{% endif %}
+                </div>
+            </div>
+        </div>
         <div class="form-group">
             <label>Name</label>
             <input type="text" name="name" id="rename-view-input" class="form-input">
@@ -90,6 +125,8 @@
             <div class="shortcut-row"><kbd>Ctrl Shift 7</kbd><span>Ordered list</span></div>
             <div class="shortcut-row"><kbd>Ctrl Shift 8</kbd><span>Bullet list</span></div>
             <div class="shortcut-row"><kbd>Ctrl K</kbd><span>Insert link</span></div>
+            <div class="shortcut-row"><kbd>Ctrl Shift C</kbd><span>Checklist (clickable checkboxes)</span></div>
+            <div class="shortcut-row"><kbd>Ctrl /</kbd><span>Insert a template — ↑↓, Enter</span></div>
             <div class="shortcut-row"><kbd>[[</kbd><span>Link to another record — type to filter, ↑↓, Enter</span></div>
         </div>
         <div class="shortcuts-group">
@@ -102,11 +139,82 @@
 
 <script src="/static/app.js"></script>
 <script>
-function openRenameView(id, name) {
+// ── Shared: type-aware filter editor for the Backlinks field config ──
+function _blEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+var _BL_NO_VALUE = ['is_empty','is_not_empty','is_true','is_false','is_today','overdue','upcoming'];
+var _BL_DAYS = ['within_days','next_days','past_days'];
+function _blOpNeedsValue(op){ return _BL_NO_VALUE.indexOf(op) === -1; }
+function _blValueControl(col, op){
+    if (!_blOpNeedsValue(op)) return '';
+    var t = (col||{}).type || 'text';
+    if (_BL_DAYS.indexOf(op) !== -1) return '<input type="number" min="0" name="bl_val" class="form-input-sm" placeholder="days"> <span class="sf-unit">days</span>';
+    if (t === 'checkbox') return '';
+    if (t === 'date') return '<input type="date" name="bl_val" class="form-input-sm">';
+    if (t === 'number' || t === 'currency' || t === 'percent') return '<input type="number" step="any" name="bl_val" class="form-input-sm" placeholder="0">';
+    if (t === 'select' || t === 'multiselect'){
+        var opts = []; try { opts = JSON.parse(col.options || '[]'); } catch(e){}
+        var h = '<select name="bl_val" class="form-input-sm"><option value="">—</option>';
+        opts.forEach(function(o){ h += '<option value="'+_blEsc(o)+'">'+_blEsc(o)+'</option>'; });
+        return h + '</select>';
+    }
+    var it = (t === 'email') ? 'email' : (t === 'url') ? 'url' : 'text';
+    return '<input type="'+it+'" name="bl_val" class="form-input-sm" placeholder="value…">';
+}
+// Render field + operator + value controls into `containerId`. `cur` = {field,op,val}
+function renderBacklinkFilter(containerId, columns, opsByType, cur){
+    var box = document.getElementById(containerId);
+    if (!box) return;
+    cur = cur || {};
+    var state = { field: cur.field || '', op: cur.op || '', val: (cur.val == null ? '' : cur.val) };
+    function colById(id){ for (var i=0;i<columns.length;i++) if (String(columns[i].id) === String(id)) return columns[i]; return null; }
+    function build(){
+        var col = colById(state.field);
+        var ops = col ? (opsByType[col.type] || opsByType['text'] || []) : [];
+        if (col && !ops.some(function(o){ return o[0] === state.op; })) state.op = ops.length ? ops[0][0] : '';
+        var h = '<span>Only where</span>';
+        h += '<select class="form-input-sm bl-field-sel"><option value="">(any field)</option>';
+        columns.forEach(function(c){
+            if (c.type === 'backlinks' || c.type === 'longtext') return;
+            h += '<option value="'+c.id+'"'+(String(c.id)===String(state.field)?' selected':'')+'>'+_blEsc(c.name)+'</option>';
+        });
+        h += '</select>';
+        // hidden field carries the chosen field id to the form
+        h += '<input type="hidden" name="bl_field" value="'+_blEsc(state.field)+'">';
+        if (col){
+            h += '<select class="form-input-sm bl-op-sel" name="bl_op">';
+            ops.forEach(function(o){ h += '<option value="'+o[0]+'"'+(o[0]===state.op?' selected':'')+'>'+_blEsc(o[1])+'</option>'; });
+            h += '</select>';
+            h += _blValueControl(col, state.op);
+        } else {
+            h += '<input type="hidden" name="bl_op" value=""><input type="hidden" name="bl_val" value="">';
+        }
+        box.innerHTML = h;
+        var fieldSel = box.querySelector('.bl-field-sel');
+        fieldSel.onchange = function(){ state = { field: this.value, op: '', val: '' }; build(); };
+        var opSel = box.querySelector('.bl-op-sel');
+        if (opSel) opSel.onchange = function(){
+            var valEl = box.querySelector('[name=bl_val]');
+            state.val = valEl ? valEl.value : '';
+            state.op = this.value; build();
+        };
+        // restore current value into the freshly built control
+        var valEl = box.querySelector('[name=bl_val]');
+        if (valEl && state.val !== '' && valEl.tagName) { valEl.value = state.val; }
+    }
+    build();
+}
+function openRenameView(id, name, icon) {
     var f = document.getElementById('rename-view-form');
     f.action = '/api/views/' + id + '/rename';
     document.getElementById('rename-view-input').value = name;
+    var f = document.getElementById('rename-view-form');
+    f.action = '/api/views/' + id + '/rename';
+    document.getElementById('rename-view-input').value = name;
+    document.getElementById('rename-view-icon').value = icon || '';
     openModal('modal-rename-view');
+}
+function pickViewEmoji(em) {
+    document.getElementById('rename-view-icon').value = em;
 }
 {% if workspace %}
 function createView() {
@@ -116,6 +224,59 @@ function createView() {
         .then(function(d){ if(d.ok) window.location = '/view/' + d.id; });
 }
 {% endif %}
+
+// ── Sidebar view drag-to-reorder / nest ──────────────────────
+var _dragVid = null, _dropMode = null;
+function sidebarDragStart(e, vid, parentId) {
+    _dragVid = vid;
+    e.dataTransfer.effectAllowed = 'move';
+    setTimeout(function(){ e.target.classList.add('dragging'); }, 0);
+}
+function sidebarDragEnd(e) {
+    _dragVid = null;
+    document.querySelectorAll('.nav-item-row').forEach(function(el){
+        el.classList.remove('dragging','drag-over-before','drag-over-after','drag-over-nest');
+    });
+}
+function sidebarDragOver(e, vid, parentId) {
+    if (_dragVid === null || _dragVid === vid) return;
+    e.preventDefault(); e.stopPropagation();
+    var rect = e.currentTarget.getBoundingClientRect();
+    var relY = (e.clientY - rect.top) / rect.height;
+    document.querySelectorAll('.nav-item-row').forEach(function(el){
+        el.classList.remove('drag-over-before','drag-over-after','drag-over-nest');
+    });
+    if (relY < 0.3) { e.currentTarget.classList.add('drag-over-before'); _dropMode = 'before'; }
+    else if (relY > 0.7) { e.currentTarget.classList.add('drag-over-after'); _dropMode = 'after'; }
+    else { e.currentTarget.classList.add('drag-over-nest'); _dropMode = 'nest'; }
+}
+function sidebarDragLeave(e) {
+    e.currentTarget.classList.remove('drag-over-before','drag-over-after','drag-over-nest');
+}
+function sidebarDrop(e, targetVid, targetParent) {
+    e.preventDefault();
+    if (_dragVid === null || _dragVid === targetVid) return;
+    var payload = {};
+    if (_dropMode === 'nest') {
+        payload.parent_id = targetVid;
+    } else if (_dropMode === 'before') {
+        payload.parent_id = targetParent || null;
+        payload.before_id = targetVid;
+    } else {
+        payload.parent_id = targetParent || null;
+        payload.after_id = targetVid;
+    }
+    fetch('/api/views/' + _dragVid + '/move', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+    }).then(function(){ window.location.reload(); });
+}
+function toggleNavExpand(vid, btn) {
+    document.querySelectorAll('[data-parent="' + vid + '"]').forEach(function(el){
+        el.classList.toggle('nav-collapsed');
+    });
+    if (btn) btn.textContent = (btn.textContent.trim() === '▾') ? '▸' : '▾';
+}
 </script>
 {% block scripts %}{% endblock %}
 </body>

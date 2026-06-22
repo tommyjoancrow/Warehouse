@@ -1,0 +1,37 @@
+{% extends "layout.html" %}
+{% block title %}Archive{% endblock %}
+{% block content %}
+
+<div class="view-header">
+    <div class="view-header-left">
+        <h1 class="view-title">📥 Archive</h1>
+        <span class="view-subtitle">Archived records are hidden from views but kept here</span>
+    </div>
+</div>
+
+<div class="table-wrap">
+    {% if items %}
+    <table class="data-table">
+        <thead><tr><th>Record</th><th>Type</th><th>Modified</th><th></th></tr></thead>
+        <tbody>
+            {% for it in items %}
+            <tr>
+                <td><a href="/record/{{ it.id }}" class="chip-link-label">{{ it.label }}</a></td>
+                <td>{{ it.table_icon }} {{ it.table_name }}</td>
+                <td>{{ it.updated_at }}</td>
+                <td class="td-actions">
+                    <a href="/record/{{ it.id }}" class="btn-card-edit">Open</a>
+                    <form method="post" action="/record/{{ it.id }}/unarchive" style="display:inline">
+                        <button class="btn-card-edit">📤 Unarchive</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state"><div class="empty-icon">📥</div><p>No archived records.</p></div>
+    {% endif %}
+</div>
+
+{% endblock %}

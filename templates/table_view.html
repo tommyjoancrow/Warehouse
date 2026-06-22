@@ -11,123 +11,123 @@
 
 {% set rec_suffix = ('?view=' ~ view.id) if view else '' %}
 
-<div class="view-header">
-    <div class="view-header-left">
-        <h1 class="view-title">{{ table.icon }} {{ page_title }}</h1>
-        {% if view %}
-        <div class="view-options-wrap" id="view-options-wrap">
-            <button class="view-options-btn" onclick="toggleViewMenu(event)" title="View options">▾</button>
-            <div class="view-options-menu hidden" id="view-options-menu">
-                <div class="view-options-item" onclick="updateCurrentView()">💾 Save changes to view</div>
-                <div class="view-options-item" onclick="closeViewMenu(); openSaveView()">📋 Save as new view</div>
-                <div class="view-options-divider"></div>
-                <div class="view-options-item" onclick="closeViewMenu(); openDetailSettings()">🗂 Detail layout</div>
+{# Hidden form — lives outside the toolbar so it never interferes with layout #}
+<form method="get" id="filter-form" action="{{ request.path }}" style="display:none">
+    <input type="hidden" name="vt" value="{{ view_type }}" id="vt-input">
+    <input type="hidden" name="sorts" id="sorts-input" value="{{ sorts | tojson }}">
+    <input type="hidden" name="filters" id="filters-input" value="{{ filters | tojson }}">
+    <input type="hidden" name="logic" id="logic-input" value="{{ filter_logic }}">
+    <input type="hidden" name="hidden" id="hidden-input" value="{{ hidden | tojson }}">
+</form>
+
+<div class="at-toolbar view-topbar">
+    <div class="at-toolbar-row">
+        <!-- title + options dropdown -->
+        <div class="topbar-title">
+            <h1 class="view-title">{% if view and view.icon %}{{ view.icon }}{% else %}{{ table.icon }}{% endif %} {{ page_title }}</h1>
+            {% if view %}
+            <div class="view-options-wrap {% if view_dirty %}vo-dirty{% endif %}" id="view-options-wrap">
+                <button class="view-options-btn" onclick="toggleViewMenu(event)" title="View options{% if view_dirty %} — unsaved changes{% endif %}">▾</button>
+                <div class="view-options-menu hidden" id="view-options-menu">
+                    <div class="view-options-item {% if not view_dirty %}vo-disabled{% endif %}" {% if view_dirty %}onclick="updateCurrentView()"{% endif %}>💾 Save changes to view</div>
+                    <div class="view-options-item {% if not view_dirty %}vo-disabled{% endif %}" {% if view_dirty %}onclick="closeViewMenu(); openSaveView()"{% endif %}>📋 Save as new view</div>
+                </div>
             </div>
+            {% else %}
+            <button class="view-options-btn" onclick="openSaveView()" title="Save as view">💾</button>
+            {% endif %}
         </div>
-        {% else %}
-        <button class="view-options-btn" onclick="openSaveView()" title="Save as view">💾 Save as view</button>
+
+        <div class="at-toolbar-divider"></div>
+
+        <!-- search: form= links it to filter-form even though it's outside the form tag -->
+        <div class="at-search-wrap">
+            <span class="at-search-icon">🔍</span>
+            <input type="text" name="search" form="filter-form" value="{{ search }}" placeholder="Search…" class="at-search-input" id="at-search-input">
+            {% if search %}<button type="button" class="at-search-clear" onclick="clearSearch()">✕</button>{% endif %}
+        </div>
+
+        <div class="at-toolbar-divider"></div>
+
+        <!-- view type switch -->
+        <div class="vt-switch">
+            <button type="button" class="vt-btn {% if view_type=='grid' %}vt-active{% endif %}" onclick="setViewType('grid')">▦</button>
+            <button type="button" class="vt-btn {% if view_type=='card' %}vt-active{% endif %}" onclick="setViewType('card')">🃏</button>
+            <button type="button" class="vt-btn {% if view_type=='calendar' %}vt-active{% endif %}" onclick="setViewType('calendar')">📅</button>
+        </div>
+
+        <div class="at-toolbar-divider"></div>
+
+        {% set ns = namespace(fcount=0) %}
+        {% for g in filters %}{% set ns.fcount = ns.fcount + (g.rules | default([]) | length) %}{% endfor %}
+        {% set active_count = sorts|length + ns.fcount %}
+        <button type="button" class="at-btn {% if active_count>0 %}at-btn-active{% endif %}" onclick="toggleSFPanel()">
+            Sort &amp; filter{% if active_count>0 %} <span class="at-badge">{{ active_count }}</span>{% endif %}
+        </button>
+
+        {% if view_type == 'card' and view %}
+        <button type="button" class="at-btn" onclick="openCardDetails()">🃏 Card details</button>
+        {% elif view_type == 'calendar' and view %}
+        <button type="button" class="at-btn" onclick="openCalDetails()">📅 Cal. details</button>
         {% endif %}
+
+        {% if archived_count %}
+        <a href="?{% if view_type!='grid' %}vt={{ view_type }}&{% endif %}archived={{ '0' if show_archived else '1' }}"
+           class="at-btn {% if show_archived %}at-btn-active{% endif %}">
+            {% if show_archived %}Hide archived{% else %}Archived ({{ archived_count }}){% endif %}
+        </a>
+        {% endif %}
+
+        {% if view_type == 'calendar' and date_columns %}
+        <span class="cal-anchor-wrap">📅
+            <select class="form-input-sm" onchange="setDateCol(this.value)">
+                {% for dc in date_columns %}
+                <option value="{{ dc.id }}" {% if dc.id == date_col_id %}selected{% endif %}>{{ dc.name }}</option>
+                {% endfor %}
+            </select>
+        </span>
+        {% endif %}
+
+        <div class="topbar-spacer"></div>
+        <a href="/record/new?table_id={{ table.id }}{% if view %}&view_id={{ view.id }}{% endif %}" class="btn-primary btn-sm">+ New record</a>
     </div>
-    <div class="view-header-right">
-        <a href="/record/new?table_id={{ table.id }}{% if view %}&view_id={{ view.id }}{% endif %}" class="btn-primary">+ New record</a>
+
+    <!-- SORT & FILTER PANEL -->
+    <div class="at-panel sf-panel hidden" id="sf-panel">
+        <button type="button" class="sf-close" onclick="toggleSFPanel()" title="Close">✕</button>
+        <div class="sf-section">
+            <div class="sf-section-label">Sort</div>
+            <div id="sort-conditions"></div>
+            <button type="button" class="sf-add-btn" onclick="addSort()">+ Add sort</button>
+        </div>
+        <div class="sf-section">
+            <div class="sf-section-label">Filter</div>
+            <div id="filter-conditions"></div>
+            <button type="button" class="sf-add-group-btn" onclick="addFilterGroup()">+ Add filter group</button>
+        </div>
+        <div class="sf-panel-footer">
+            <button type="submit" form="filter-form" class="at-btn at-btn-primary">Apply</button>
+        </div>
     </div>
-</div>
-
-<!-- TOOLBAR -->
-<div class="at-toolbar">
-    <form method="get" id="filter-form" action="{{ request.path }}">
-        <input type="hidden" name="vt" value="{{ view_type }}" id="vt-input">
-        <input type="hidden" name="sorts" id="sorts-input" value="{{ sorts | tojson }}">
-        <input type="hidden" name="filters" id="filters-input" value="{{ filters | tojson }}">
-        <input type="hidden" name="logic" id="logic-input" value="{{ filter_logic }}">
-        <input type="hidden" name="hidden" id="hidden-input" value="{{ hidden | tojson }}">
-
-        <div class="at-toolbar-row">
-            <div class="at-search-wrap">
-                <span class="at-search-icon">🔍</span>
-                <input type="text" name="search" value="{{ search }}" placeholder="Search this table…" class="at-search-input" id="at-search-input">
-                {% if search %}<button type="button" class="at-search-clear" onclick="clearSearch()">✕</button>{% endif %}
-            </div>
-
-            <div class="at-toolbar-divider"></div>
-
-            <!-- view type switch -->
-            <div class="vt-switch">
-                <button type="button" class="vt-btn {% if view_type=='grid' %}vt-active{% endif %}" onclick="setViewType('grid')">▦ Grid</button>
-                <button type="button" class="vt-btn {% if view_type=='card' %}vt-active{% endif %}" onclick="setViewType('card')">🃏 Cards</button>
-                <button type="button" class="vt-btn {% if view_type=='calendar' %}vt-active{% endif %}" onclick="setViewType('calendar')">📅 Calendar</button>
-            </div>
-
-            <div class="at-toolbar-divider"></div>
-
-            {% set ns = namespace(fcount=0) %}
-            {% for g in filters %}{% set ns.fcount = ns.fcount + (g.rules | default([]) | length) %}{% endfor %}
-            {% set active_count = sorts|length + ns.fcount %}
-            <button type="button" class="at-btn {% if active_count>0 %}at-btn-active{% endif %}" onclick="toggleSFPanel()">
-                ↕⚙ Sort &amp; filter{% if active_count>0 %} <span class="at-badge">{{ active_count }}</span>{% endif %}
-            </button>
-
-            {% if view_type == 'card' and view %}
-            <button type=”button” class=”at-btn” onclick=”openCardDetails()”>🃏 Card details</button>
-            {% elif view_type == 'calendar' and view %}
-            <button type=”button” class=”at-btn” onclick=”openCalDetails()”>📅 Calendar item details</button>
-            {% endif %}
-
-            {% if archived_count %}
-            <a href=”?{% if view_type!='grid' %}vt={{ view_type }}&{% endif %}archived={{ '0' if show_archived else '1' }}”
-               class=”at-btn {% if show_archived %}at-btn-active{% endif %}”>
-                {% if show_archived %}Hide archived{% else %}Show archived ({{ archived_count }}){% endif %}
-            </a>
-            {% endif %}
-
-            {% if view_type == 'calendar' and date_columns %}
-            <span class=”cal-anchor-wrap”>📅 Anchor:
-                <select class=”form-input-sm” onchange=”setDateCol(this.value)”>
-                    {% for dc in date_columns %}
-                    <option value=”{{ dc.id }}” {% if dc.id == date_col_id %}selected{% endif %}>{{ dc.name }}</option>
-                    {% endfor %}
-                </select>
-            </span>
-            {% endif %}
-        </div>
-
-        <!-- SORT & FILTER PANEL -->
-        <div class="at-panel sf-panel hidden" id="sf-panel">
-            <div class="sf-section">
-                <div class="sf-section-label">Sort</div>
-                <div id="sort-conditions"></div>
-                <button type="button" class="sf-add-btn" onclick="addSort()">+ Add sort</button>
-            </div>
-            <div class="sf-section">
-                <div class="sf-section-label">Filter</div>
-                <div id="filter-conditions"></div>
-                <button type="button" class="sf-add-group-btn" onclick="addFilterGroup()">+ Add filter group</button>
-            </div>
-            <div class="sf-panel-footer">
-                <button type="submit" class="at-btn at-btn-primary">Apply</button>
-                <a href="{{ request.path }}" class="at-btn at-btn-clear">Clear</a>
-            </div>
-        </div>
-
-    </form>
 </div>
 
 <!-- BULK BAR -->
 <div class="bulk-bar hidden" id="bulk-bar">
     <span class="bulk-count" id="bulk-count">0 selected</span>
+    <button type="button" class="at-btn bulk-selectall" id="bulk-selectall" onclick="toggleSelectAllBtn()">Select all</button>
     <div class="bulk-bar-actions">
         <button type="button" class="at-btn" onclick="bulkArchive()">📥 Archive</button>
         <button type="button" class="at-btn" onclick="bulkDelete()">🗑 Delete</button>
         <span class="bulk-edit-wrap">
             <select class="form-input-sm" id="bulk-field" onchange="onBulkFieldChange()">
                 <option value="">Bulk edit field…</option>
-                {% for c in columns %}{% if not loop.first %}<option value="{{ c.id }}" data-type="{{ c.type }}" data-options='{{ c.options }}'>{{ c.name }}</option>{% endif %}{% endfor %}
+                {% for c in columns %}{% if not loop.first and c.type != 'backlinks' %}<option value="{{ c.id }}" data-type="{{ c.type }}" data-options='{{ c.options }}'>{{ c.name }}</option>{% endif %}{% endfor %}
             </select>
             <span id="bulk-value-wrap"></span>
             <button type="button" class="at-btn at-btn-primary hidden" id="bulk-apply" onclick="applyBulkEdit()">Apply</button>
         </span>
-        <button type="button" class="at-btn" onclick="clearSelection()">Clear</button>
     </div>
+    <button type="button" class="bulk-close" onclick="clearSelection()" title="Clear selection">✕</button>
 </div>
 
 {# ── GRID VIEW ─────────────────────────────────────────────── #}
@@ -136,24 +136,18 @@
     <table class="data-table" id="data-table">
         <thead>
             <tr>
+                <th class="th-expand-col"></th>
                 <th class="th-check"><input type="checkbox" id="select-all-cb" onchange="toggleSelectAll(this.checked)"></th>
                 {% for c in visible_columns %}
                 {% set sort_dir = (sorts | selectattr('c','equalto',c.id) | map(attribute='d') | first) %}
                 <th data-col-id="{{ c.id }}" draggable="true">
                     <div class="th-inner">
-                        <span class="th-label" onclick="sortByCol({{ c.id }})" title="Sort by {{ c.name }}">
-                            {{ c.name }}
-                            {% if sort_dir == 'asc' %}<span class="th-sort">▲</span>{% elif sort_dir == 'desc' %}<span class="th-sort">▼</span>{% endif %}
-                        </span>
-                        <button type="button" class="th-caret" onclick="openColMenu(event, {{ c.id }})" title="Field options">▾</button>
+                        <span class="th-label" onclick="sortByCol({{ c.id }})" title="Sort by {{ c.name }}">{{ c.name }}</span>
+                        <button type="button" class="th-caret {% if sort_dir %}th-caret-sorted{% endif %}" onclick="openColMenu(event, {{ c.id }})" title="Field options">{% if sort_dir == 'asc' %}▲{% elif sort_dir == 'desc' %}▼{% else %}▾{% endif %}</button>
                     </div>
                     <div class="col-menu hidden" id="colmenu-{{ c.id }}">
-                        <div class="col-menu-item" onclick="applyColSort({{ c.id }},'asc')">↑ Sort ascending</div>
-                        <div class="col-menu-item" onclick="applyColSort({{ c.id }},'desc')">↓ Sort descending</div>
-                        <div class="col-menu-divider"></div>
                         <div class="col-menu-item" onclick="openColumnEdit({{ c.id }})">✎ Edit field</div>
                         {% if view %}<div class="col-menu-item" onclick="hideField({{ c.id }})">🙈 Hide field</div>{% endif %}
-                        <div class="col-menu-item col-menu-danger" onclick="deleteColumnById({{ c.id }})">🗑 Delete field</div>
                     </div>
                     <button type="button" class="th-insert" onclick="openAddField({{ c.id }})" title="Insert field here">+</button>
                 </th>
@@ -163,21 +157,23 @@
         <tbody>
             {% for rec in records %}
             <tr data-record-id="{{ rec.id }}" {% if rec.archived %}class="row-archived"{% endif %}>
+                <td class="td-expand-cell"><a href="/record/{{ rec.id }}{{ rec_suffix }}" class="row-expand-btn" title="Open record">⤢</a></td>
                 <td class="td-check">
                     <input type="checkbox" class="row-cb" value="{{ rec.id }}" onchange="onRowCheck()">
-                    <a href="/record/{{ rec.id }}{{ rec_suffix }}" class="row-expand" title="Open record">⤢</a>
                 </td>
                 {% for c in visible_columns %}
                 <td class="data-cell" data-record-id="{{ rec.id }}" data-col-id="{{ c.id }}" data-type="{{ c.type }}"
                     data-options='{{ c.options }}' data-raw='{{ rec.cells.get(c.id, "") }}'
-                    {% if c.type == 'longtext' %}onclick="window.location='/record/{{ rec.id }}{{ rec_suffix }}'"{% else %}onclick="startInlineEdit(this)"{% endif %}>
+                    {% if c.type == 'longtext' %}onclick="window.location='/record/{{ rec.id }}{{ rec_suffix }}'"{% elif c.type == 'backlinks' %}{% else %}onclick="startInlineEdit(this)"{% endif %}>
                     {% set d = rec.display[c.id] %}
                     {% if c.type == 'checkbox' %}
                         <input type="checkbox" {% if d=='✓' %}checked{% endif %} onclick="event.stopPropagation(); toggleCheckbox({{ rec.id }},{{ c.id }},this.checked)">
                     {% elif c.type in ('multiselect','tag') %}
                         {% for v in d %}<span class="chip">{{ v }}</span>{% endfor %}
                     {% elif c.type == 'link' %}
-                        {% for v in d %}<span class="chip chip-link">↗ {{ v }}</span>{% endfor %}
+                        {% for v in d %}<a href="/record/{{ v.id }}{{ rec_suffix }}" class="chip chip-link" onclick="event.stopPropagation()">↗ {{ v.name }}</a>{% endfor %}
+                    {% elif c.type == 'backlinks' %}
+                        {% for v in d %}<a href="/record/{{ v.id }}{{ rec_suffix }}" class="chip chip-link" onclick="event.stopPropagation()">↩ {{ v.name }}</a>{% endfor %}
                     {% elif c.type == 'select' and d %}
                         <span class="chip chip-select">{{ d }}</span>
                     {% elif c.type == 'url' and d %}
@@ -200,33 +196,42 @@
 {% elif view_type == 'card' %}
 {% set card_cols = visible_columns | rejectattr('id', 'equalto', primary.id if primary else 0) | list %}
 {% if card_field_ids %}
-  {% set card_cols = card_cols | selectattr('id', 'in', card_field_ids) | list %}
+  {% set _ordered = [] %}
+  {% for cid in card_field_ids %}
+    {% for c in card_cols %}{% if c.id == cid %}{% set _ = _ordered.append(c) %}{% endif %}{% endfor %}
+  {% endfor %}
+  {% set card_cols = _ordered %}
 {% endif %}
 <div class="card-grid">
     {% for rec in records %}
-    <a href="/record/{{ rec.id }}{{ rec_suffix }}" class="card">
-        <div class="card-top">
-            <div class="card-title">{{ rec.display[primary.id] if primary else ('Record ' ~ rec.id) }}</div>
-        </div>
-        {% if card_cols %}
-        <div class="card-fields">
-            {% for c in card_cols %}
-                {% set d = rec.display[c.id] %}
-                {% if d %}
-                <div class="card-field">
-                    <span class="card-field-label">{{ c.name }}</span>
-                    <span class="card-field-val">
-                        {% if c.type == 'checkbox' %}{{ '✓' if d=='✓' else '—' }}
-                        {% elif c.type in ('multiselect','tag','link') %}{% for v in d %}<span class="chip">{{ v }}</span>{% endfor %}
-                        {% elif c.type == 'select' and d %}<span class="chip chip-select">{{ d }}</span>
-                        {% else %}{{ d }}{% endif %}
-                    </span>
-                </div>
-                {% endif %}
-            {% endfor %}
-        </div>
-        {% endif %}
-    </a>
+    <div class="card-wrap{% if rec.archived %} card-archived{% endif %}">
+        <input type="checkbox" class="row-cb card-cb" value="{{ rec.id }}" onchange="onRowCheck()" title="Select record">
+        <a href="/record/{{ rec.id }}{{ rec_suffix }}" class="card">
+            <div class="card-top">
+                <div class="card-title">{{ rec.display[primary.id] if primary else ('Record ' ~ rec.id) }}</div>
+            </div>
+            {% if card_cols %}
+            <div class="card-fields">
+                {% for c in card_cols %}
+                    {% set d = rec.display[c.id] %}
+                    {% if d %}
+                    <div class="card-field">
+                        <span class="card-field-label">{{ c.name }}</span>
+                        <span class="card-field-val">
+                            {% if c.type == 'checkbox' %}{{ '✓' if d=='✓' else '—' }}
+                            {% elif c.type in ('multiselect','tag') %}{% for v in d %}<span class="chip">{{ v }}</span>{% endfor %}
+                            {% elif c.type == 'link' %}{% for v in d %}<span class="chip chip-link">↗ {{ v.name }}</span>{% endfor %}
+                            {% elif c.type == 'backlinks' %}{% for v in d %}<span class="chip">↩ {{ v.name }}</span>{% endfor %}
+                            {% elif c.type == 'select' and d %}<span class="chip chip-select">{{ d }}</span>
+                            {% else %}{{ d }}{% endif %}
+                        </span>
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
+        </a>
+    </div>
     {% endfor %}
     {% if not records %}<div class="empty-state-inline">No records.</div>{% endif %}
 </div>
@@ -239,11 +244,17 @@
     {% else %}
     <div class="cal-wrap">
         <div class="cal-header">
-            <a href="?vt=calendar&m={{ cal_prev }}" class="cal-nav">‹</a>
-            <span class="cal-month">{{ cal_month_label }}</span>
-            <a href="?vt=calendar&m={{ cal_next }}" class="cal-nav">›</a>
+            <div class="cal-nav-group">
+                <a href="?vt=calendar{% if cal_mode=='week' %}&cal=week&wd={{ cal_prev }}{% else %}&m={{ cal_prev }}{% endif %}" class="cal-nav">‹</a>
+                <span class="cal-month">{{ cal_month_label }}</span>
+                <a href="?vt=calendar{% if cal_mode=='week' %}&cal=week&wd={{ cal_next }}{% else %}&m={{ cal_next }}{% endif %}" class="cal-nav">›</a>
+            </div>
+            <div class="cal-mode-toggle">
+                <a href="?vt=calendar" class="cal-mode-btn {% if cal_mode != 'week' %}active{% endif %}">Month</a>
+                <a href="?vt=calendar&cal=week" class="cal-mode-btn {% if cal_mode == 'week' %}active{% endif %}">Week</a>
+            </div>
         </div>
-        <div class="cal-grid">
+        <div class="cal-grid {% if cal_mode == 'week' %}cal-grid-week{% endif %}">
             {% for dn in ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'] %}
             <div class="cal-dayname">{{ dn }}</div>
             {% endfor %}
@@ -317,6 +328,10 @@
         <div class="form-group hidden" id="add-col-tag-wrap">
             <p class="rec-hint">A tag list. Type values separated by commas; existing tags autocomplete as you type.</p>
         </div>
+        <div class="form-group hidden" id="add-col-backlink-wrap">
+            <p class="rec-hint">Backlinks list every record that links to this one. Optionally limit which appear:</p>
+            <div class="bl-filter-row" id="add-bl-config"></div>
+        </div>
         <button type="submit" class="btn-primary">Create field</button>
     </form>
 </div>
@@ -342,9 +357,16 @@
         <div class="form-group hidden" id="edit-col-link-wrap">
             <p class="rec-hint">Links point to other records in your workspace.</p>
         </div>
+        <div class="form-group hidden" id="edit-col-backlink-wrap">
+            <p class="rec-hint">Backlinks list every record that links to this one. Optionally limit which appear:</p>
+            <div class="bl-filter-row" id="edit-bl-config"></div>
+        </div>
         <div class="edit-col-footer">
             <button type="submit" class="btn-primary">Save</button>
-            <button type="button" class="btn-ghost btn-danger" onclick="deleteColumn()">🗑 Delete column</button>
+        </div>
+        <div class="danger-zone">
+            <button type="button" class="btn-danger-solid" onclick="deleteColumn()">🗑 Delete entire data field</button>
+            <p class="danger-note">Permanently removes this field and its data from every record. This cannot be undone.</p>
         </div>
     </form>
 </div>
@@ -352,11 +374,18 @@
 {% if view %}
 <!-- DETAIL LAYOUT MODAL -->
 <div class="modal hidden" id="modal-detail-settings">
-    <div class="modal-header"><h3>Detail layout — “{{ view.name }}”</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
+    <div class="modal-header"><h3>Detail layout — "{{ view.name }}"</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
+    <div class="dl-mode-tabs">
+        <button type="button" class="dl-mode-tab" id="dl-tab-crm" onclick="setDetailLayoutMode('crm')">☰ CRM mode<br><small>Data-focused</small></button>
+        <button type="button" class="dl-mode-tab" id="dl-tab-writing" onclick="setDetailLayoutMode('writing')">✍ Writing mode<br><small>Text-focused</small></button>
+    </div>
     <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px">
-        Choose which fields show (and in what order) when you open a record from this view. The first field (the record title) is always shown.
+        Choose which fields show when opening a record from this view. Drag rows to reorder. The title field is always shown first.
     </p>
     <div id="detail-fields-list" class="detail-fields-list"></div>
+    <label class="dl-collapse-opt">
+        <input type="checkbox" id="dl-collapse-cb"> Start the details panel collapsed <span class="dl-collapse-note">(Writing mode)</span>
+    </label>
     <button type="button" class="btn-primary" onclick="saveDetailFields()">Save layout</button>
 </div>
 {% endif %}
@@ -412,6 +441,8 @@ var OPS_BY_TYPE = {{ ops_by_type | tojson }};
 var currentSorts = {{ sorts | tojson }};
 var currentFilters = {{ filters | tojson }};
 var DETAIL_FIELDS = {{ detail_field_ids | tojson if detail_field_ids is defined else '[]' }};
+var DETAIL_MODE = '{{ detail_mode if detail_mode is defined else "crm" }}';
+var DETAIL_COLLAPSED = {{ 'true' if (detail_collapsed is defined and detail_collapsed) else 'false' }};
 var CARD_FIELDS = {{ card_field_ids | tojson if card_field_ids is defined else '[]' }};
 var CAL_FIELDS = {{ cal_field_ids | tojson if cal_field_ids is defined else '[]' }};
 var DATE_COL_ID = {{ date_col_id if date_col_id else 'null' }};
@@ -445,27 +476,85 @@ function setDateCol(colId){
 }
 
 // ── Detail layout settings ────────────────────────────────────
+var _dlMode = 'crm';
+function setDetailLayoutMode(mode) {
+    _dlMode = mode;
+    document.getElementById('dl-tab-crm').classList.toggle('active', mode === 'crm');
+    document.getElementById('dl-tab-writing').classList.toggle('active', mode === 'writing');
+}
 function openDetailSettings(){
+    _dlMode = DETAIL_MODE || 'crm';
+    setDetailLayoutMode(_dlMode);
     var box = document.getElementById('detail-fields-list');
-    var chosen = DETAIL_FIELDS.length ? DETAIL_FIELDS : COLUMNS.map(function(c){return c.id;});
-    // primary always first & always on
     var primaryId = COLUMNS.length ? COLUMNS[0].id : null;
-    var rows = COLUMNS.map(function(c){
+    var chosen = DETAIL_FIELDS.length ? DETAIL_FIELDS : COLUMNS.map(function(c){return c.id;});
+    // Build ordered list: primary first, then chosen order, then unchosen
+    var orderedCols = [];
+    var primary = COLUMNS.find(function(c){ return c.id === primaryId; });
+    if (primary) orderedCols.push(primary);
+    chosen.forEach(function(cid){
+        if (cid !== primaryId) {
+            var c = COLUMNS.find(function(col){ return col.id === cid; });
+            if (c) orderedCols.push(c);
+        }
+    });
+    COLUMNS.forEach(function(c){
+        if (c.id !== primaryId && chosen.indexOf(c.id) === -1) orderedCols.push(c);
+    });
+    box.innerHTML = orderedCols.map(function(c){
         var isPrimary = c.id === primaryId;
         var on = isPrimary || chosen.indexOf(c.id) !== -1;
-        return '<label class="detail-field-row">' +
-            '<input type="checkbox" class="detail-field-cb" value="'+c.id+'" '+(on?'checked':'')+(isPrimary?' disabled':'')+'> '+
-            escapeHtml(c.name) + (isPrimary?' <span class="eff-type">title</span>':'') +
-            '</label>';
+        return '<div class="dl-field-row" data-col-id="'+c.id+'" draggable="'+(isPrimary?'false':'true')+'" '+
+            'ondragstart="dlDragStart(event)" ondragover="dlDragOver(event)" ondrop="dlDrop(event)" ondragleave="dlDragLeave(event)">'+
+            '<span class="dl-drag-handle">'+(isPrimary?'':'⠿')+'</span>'+
+            '<input type="checkbox" class="detail-field-cb" value="'+c.id+'" '+(on?'checked':'')+(isPrimary?' disabled':'')+'>'+
+            '<span>'+escapeHtml(c.name)+(isPrimary?' <span class="eff-type">title</span>':'')+'</span>'+
+            '</div>';
     }).join('');
-    box.innerHTML = rows;
+    var cb = document.getElementById('dl-collapse-cb');
+    if (cb) cb.checked = !!DETAIL_COLLAPSED;
     openModal('modal-detail-settings');
 }
+var _dlDragSrc = null;
+function dlDragStart(e){ _dlDragSrc = e.currentTarget; e.dataTransfer.effectAllowed='move'; }
+function _dlClearLines(){
+    document.querySelectorAll('.dl-field-row').forEach(function(r){
+        r.classList.remove('drop-above','drop-below');
+    });
+}
+function dlDragOver(e){
+    if (!_dlDragSrc || _dlDragSrc === e.currentTarget) return;
+    e.preventDefault();
+    var tgt = e.currentTarget;
+    if (tgt.getAttribute('draggable') === 'false') return; // never above the title
+    var rect = tgt.getBoundingClientRect();
+    var below = (e.clientY - rect.top) > rect.height / 2;
+    tgt.classList.toggle('drop-below', below);
+    tgt.classList.toggle('drop-above', !below);
+}
+function dlDragLeave(e){ e.currentTarget.classList.remove('drop-above','drop-below'); }
+function dlDrop(e){
+    e.preventDefault();
+    var target = e.currentTarget;
+    var below = target.classList.contains('drop-below');
+    _dlClearLines();
+    if (!_dlDragSrc || _dlDragSrc === target) return;
+    if (target.getAttribute('draggable') === 'false') return; // can't drop onto a locked row (the title)
+    if (below) target.parentNode.insertBefore(_dlDragSrc, target.nextSibling);
+    else target.parentNode.insertBefore(_dlDragSrc, target);
+    _dlDragSrc = null;
+}
 function saveDetailFields(){
-    var ids = Array.from(document.querySelectorAll('.detail-field-cb'))
-        .filter(function(cb){ return cb.checked; }).map(function(cb){ return parseInt(cb.value); });
+    var ids = Array.from(document.querySelectorAll('.dl-field-row'))
+        .filter(function(row){
+            var cb = row.querySelector('.detail-field-cb');
+            return cb && cb.checked;
+        })
+        .map(function(row){ return parseInt(row.dataset.colId); });
+    var collapsedCb = document.getElementById('dl-collapse-cb');
+    var collapsed = collapsedCb ? collapsedCb.checked : false;
     fetch('/api/views/'+VIEW_ID+'/detail-fields', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({fields: ids})}).then(function(){ closeModals(); });
+        body: JSON.stringify({fields: ids, mode: _dlMode, collapsed: collapsed})}).then(function(){ closeModals(); });
 }
 
 // ── View-options dropdown (title area) ───────────────────────
@@ -484,16 +573,27 @@ document.addEventListener('click', function(){ closeViewMenu(); });
 function openCardDetails(){
     var box = document.getElementById('card-fields-list');
     var primaryId = COLUMNS.length ? COLUMNS[0].id : null;
-    var chosen = CARD_FIELDS.length ? CARD_FIELDS : COLUMNS.filter(function(c){ return c.id !== primaryId; }).map(function(c){ return c.id; });
-    box.innerHTML = COLUMNS.filter(function(c){ return c.id !== primaryId; }).map(function(c){
+    var nonPrimary = COLUMNS.filter(function(c){ return c.id !== primaryId; });
+    var chosen = CARD_FIELDS.length ? CARD_FIELDS : nonPrimary.map(function(c){ return c.id; });
+    // Ordered: chosen (in saved order) first, then the rest
+    var ordered = [];
+    chosen.forEach(function(cid){ var c = nonPrimary.find(function(x){ return x.id === cid; }); if (c) ordered.push(c); });
+    nonPrimary.forEach(function(c){ if (chosen.indexOf(c.id) === -1) ordered.push(c); });
+    box.innerHTML = ordered.map(function(c){
         var on = chosen.indexOf(c.id) !== -1;
-        return '<label class="detail-field-row"><input type="checkbox" class="card-field-cb" value="'+c.id+'" '+(on?'checked':'')+'>'+escapeHtml(c.name)+'</label>';
+        return '<div class="dl-field-row" data-col-id="'+c.id+'" draggable="true" '+
+            'ondragstart="dlDragStart(event)" ondragover="dlDragOver(event)" ondrop="dlDrop(event)" ondragleave="dlDragLeave(event)">'+
+            '<span class="dl-drag-handle">⠿</span>'+
+            '<input type="checkbox" class="card-field-cb" value="'+c.id+'" '+(on?'checked':'')+'>'+
+            '<span>'+escapeHtml(c.name)+'</span>'+
+            '</div>';
     }).join('');
     openModal('modal-card-details');
 }
 function saveCardFields(){
-    var ids = Array.from(document.querySelectorAll('.card-field-cb'))
-        .filter(function(cb){ return cb.checked; }).map(function(cb){ return parseInt(cb.value); });
+    var ids = Array.from(document.querySelectorAll('#card-fields-list .dl-field-row'))
+        .filter(function(row){ var cb = row.querySelector('.card-field-cb'); return cb && cb.checked; })
+        .map(function(row){ return parseInt(row.dataset.colId); });
     fetch('/api/views/'+VIEW_ID+'/card-fields', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({fields: ids})}).then(function(){ window.location.reload(); });
 }
@@ -535,27 +635,74 @@ function renderSorts() {
     currentSorts.forEach(function(s, i){
         var row = document.createElement('div');
         row.className = 'at-condition-row';
+        row.setAttribute('data-idx', i);
+        row.setAttribute('draggable', 'true');
+        row.ondragstart = function(e){ sortDragStart(e, i); };
+        row.ondragover  = function(e){ sortDragOver(e); };
+        row.ondragleave = function(e){ e.currentTarget.classList.remove('drop-above','drop-below'); };
+        row.ondrop      = function(e){ sortDrop(e, i); };
+        var lbl = sortDirLabels(s.c);
         row.innerHTML =
-            '<span class="sf-row-icon">↕</span>' +
-            colSelect(s.c, 'updateSort('+i+',\'c\',this.value)') +
+            '<span class="sf-row-icon sf-drag" title="Drag to reorder">⠿</span>' +
+            colSelect(s.c, 'updateSort('+i+',\'c\',this.value)', true) +
             '<select class="form-input-sm sf-dir-select" onchange="updateSort('+i+',\'d\',this.value)">' +
-                '<option value="asc"'+(s.d==='asc'?' selected':'')+'>A → Z / oldest first</option>' +
-                '<option value="desc"'+(s.d==='desc'?' selected':'')+'>Z → A / newest first</option>' +
+                '<option value="asc"'+(s.d==='asc'?' selected':'')+'>'+lbl[0]+'</option>' +
+                '<option value="desc"'+(s.d==='desc'?' selected':'')+'>'+lbl[1]+'</option>' +
             '</select>' +
             '<button type="button" class="at-remove-btn" onclick="removeSort('+i+')">✕</button>';
         box.appendChild(row);
     });
 }
-function colSelect(selected, onchange) {
+var _sortDragIdx = null;
+function sortDragStart(e, i){ _sortDragIdx = i; e.dataTransfer.effectAllowed = 'move'; }
+function sortDragOver(e){
+    if (_sortDragIdx === null) return;
+    e.preventDefault();
+    var r = e.currentTarget.getBoundingClientRect();
+    var below = (e.clientY - r.top) > r.height / 2;
+    e.currentTarget.classList.toggle('drop-below', below);
+    e.currentTarget.classList.toggle('drop-above', !below);
+}
+function sortDrop(e, i){
+    e.preventDefault();
+    var below = e.currentTarget.classList.contains('drop-below');
+    e.currentTarget.classList.remove('drop-above','drop-below');
+    if (_sortDragIdx === null || _sortDragIdx === i) { _sortDragIdx = null; return; }
+    var moved = currentSorts.splice(_sortDragIdx, 1)[0];
+    var target = i;
+    if (_sortDragIdx < i) target = below ? i : i - 1;
+    else target = below ? i + 1 : i;
+    currentSorts.splice(target, 0, moved);
+    _sortDragIdx = null;
+    renderSorts(); syncSorts();
+}
+// Special metadata fields available for sorting (not real columns)
+var META_SORTS = [['_updated_at', 'Date modified'], ['_created_at', 'Date created']];
+function sortDirLabels(colId){
+    if (colId === '_updated_at' || colId === '_created_at') return ['Oldest first', 'Newest first'];
+    var c = colById[colId];
+    var t = c ? c.type : 'text';
+    if (t === 'checkbox') return ['Unchecked first', 'Checked first'];
+    if (t === 'number' || t === 'currency' || t === 'percent') return ['Low → High', 'High → Low'];
+    if (t === 'date') return ['Oldest first', 'Newest first'];
+    return ['A → Z', 'Z → A'];
+}
+function colSelect(selected, onchange, includeMeta) {
     var html = '<select class="form-input-sm sf-field-select" onchange="'+onchange+'">';
     COLUMNS.forEach(function(c){
+        if (c.type === 'backlinks') return;  // computed — not filterable/sortable
         html += '<option value="'+c.id+'"'+(String(c.id)===String(selected)?' selected':'')+'>'+escapeHtml(c.name)+'</option>';
     });
+    if (includeMeta){
+        META_SORTS.forEach(function(m){
+            html += '<option value="'+m[0]+'"'+(String(m[0])===String(selected)?' selected':'')+'>'+m[1]+'</option>';
+        });
+    }
     return html + '</select>';
 }
 function addSort(){ var c = COLUMNS[0]; if(!c) return; currentSorts.push({c:c.id,d:'asc'}); renderSorts(); syncSorts(); }
 function removeSort(i){ currentSorts.splice(i,1); renderSorts(); syncSorts(); }
-function updateSort(i,k,v){ currentSorts[i][k]=v; syncSorts(); }
+function updateSort(i,k,v){ currentSorts[i][k]=v; if(k==='c'){ renderSorts(); } syncSorts(); }
 function syncSorts(){ document.getElementById('sorts-input').value = JSON.stringify(currentSorts); }
 
 // ── Filter groups ─────────────────────────────────────────────
@@ -568,6 +715,33 @@ var currentFilterGroups = (function(){
     return [{logic:'AND', rules: raw}];
 })();
 
+// Operators that don't take a value (the operator itself says it all)
+var NO_VALUE_OPS = ['is_empty','is_not_empty','is_true','is_false','is_today','overdue','upcoming'];
+var DAYS_OPS = ['within_days','next_days','past_days'];
+function opNeedsValue(op){ return NO_VALUE_OPS.indexOf(op) === -1; }
+// Build a value editor that matches the field's data type / operator
+function filterValueInput(col, rule, gi, ri){
+    if (!opNeedsValue(rule.op)) return '';
+    var onchg = 'updateFilterRule('+gi+','+ri+',\'v\',this.value)';
+    var t = (col||{}).type || 'text';
+    var v = rule.v || '';
+    if (DAYS_OPS.indexOf(rule.op) !== -1)
+        return '<input type="number" min="0" class="form-input-sm sf-value-input" value="'+escapeHtml(v)+'" oninput="'+onchg+'" placeholder="days"> <span class="sf-unit">days</span>';
+    if (t === 'checkbox') return '';
+    if (t === 'date')
+        return '<input type="date" class="form-input-sm sf-value-input" value="'+escapeHtml(v)+'" onchange="'+onchg+'">';
+    if (t === 'number' || t === 'currency' || t === 'percent')
+        return '<input type="number" step="any" class="form-input-sm sf-value-input" value="'+escapeHtml(v)+'" oninput="'+onchg+'" placeholder="0">';
+    if (t === 'select' || t === 'multiselect') {
+        var opts = [];
+        try { opts = JSON.parse(col.options || '[]'); } catch(e){}
+        var h = '<select class="form-input-sm sf-value-input" onchange="'+onchg+'"><option value="">—</option>';
+        opts.forEach(function(o){ h += '<option value="'+escapeHtml(o)+'"'+(String(o)===String(v)?' selected':'')+'>'+escapeHtml(o)+'</option>'; });
+        return h + '</select>';
+    }
+    var itype = (t === 'email') ? 'email' : (t === 'url') ? 'url' : 'text';
+    return '<input type="'+itype+'" class="form-input-sm sf-value-input" value="'+escapeHtml(v)+'" oninput="'+onchg+'" placeholder="value…">';
+}
 function renderFilterGroups(){
     var box = document.getElementById('filter-conditions');
     box.innerHTML = '';
@@ -596,10 +770,9 @@ function renderFilterGroups(){
             ops.forEach(function(o){ opHtml += '<option value="'+o[0]+'"'+(o[0]===rule.op?' selected':'')+'>'+o[1]+'</option>'; });
             opHtml += '</select>';
             return '<div class="at-condition-row">' +
-                '<span class="sf-row-icon">⚙</span>' +
                 colSelect(rule.c, 'updateFilterRule('+gi+','+ri+',\'c\',this.value)') +
                 opHtml +
-                '<input type="text" class="form-input-sm sf-value-input" value="'+escapeHtml(rule.v||'')+'" oninput="updateFilterRule('+gi+','+ri+',\'v\',this.value)" placeholder="value…">' +
+                filterValueInput(col, rule, gi, ri) +
                 '<button type="button" class="at-remove-btn" onclick="removeFilterRule('+gi+','+ri+')">✕</button>' +
             '</div>';
         }).join('');
@@ -621,10 +794,13 @@ function removeFilterRule(gi, ri){
     renderFilterGroups(); syncFilterGroups();
 }
 function updateFilterRule(gi, ri, k, v){
-    currentFilterGroups[gi].rules[ri][k] = v;
+    var rule = currentFilterGroups[gi].rules[ri];
+    rule[k] = v;
     if (k==='c'){
         var col = colById[v];
-        if (col){ var ops = OPS_BY_TYPE[col.type]||OPS_BY_TYPE['text']; currentFilterGroups[gi].rules[ri].op = ops[0][0]; renderFilterGroups(); }
+        if (col){ var ops = OPS_BY_TYPE[col.type]||OPS_BY_TYPE['text']; rule.op = ops[0][0]; rule.v = ''; renderFilterGroups(); }
+    } else if (k==='op'){
+        renderFilterGroups();   // value editor may need to appear/disappear
     }
     syncFilterGroups();
 }
@@ -734,6 +910,11 @@ function onColTypeChange(which){
     document.getElementById(which+'-col-link-wrap').classList.toggle('hidden', t!=='link');
     var tagWrap = document.getElementById(which+'-col-tag-wrap');
     if (tagWrap) tagWrap.classList.toggle('hidden', t!=='tag');
+    var blWrap = document.getElementById(which+'-col-backlink-wrap');
+    if (blWrap) {
+        blWrap.classList.toggle('hidden', t!=='backlinks');
+        if (t==='backlinks') renderBacklinkFilter(which+'-bl-config', COLUMNS, OPS_BY_TYPE, {});
+    }
 }
 function openColumnEdit(colId){
     var c = colById[colId];
@@ -746,6 +927,11 @@ function openColumnEdit(colId){
     if (c.type==='select'||c.type==='multiselect') document.getElementById('edit-col-options').value = (opts||[]).join(', ');
     f.dataset.colId = colId;
     onColTypeChange('edit');
+    if (c.type==='backlinks'){
+        var blo = {}; try { blo = JSON.parse(c.options || '{}') || {}; } catch(e){}
+        renderBacklinkFilter('edit-bl-config', COLUMNS, OPS_BY_TYPE,
+            {field: blo.filter_col || '', op: blo.filter_op || '', val: blo.filter_val || ''});
+    }
     openModal('modal-edit-column');
 }
 function deleteColumn(){
@@ -924,8 +1110,15 @@ function onRowCheck(){
     var all = document.getElementById('select-all-cb');
     var total = document.querySelectorAll('.row-cb').length;
     if (all){ all.indeterminate = ids.length>0 && ids.length<total; all.checked = ids.length===total && total>0; }
+    var selBtn = document.getElementById('bulk-selectall');
+    if (selBtn) selBtn.textContent = (total>0 && ids.length===total) ? 'Deselect all' : 'Select all';
 }
 function toggleSelectAll(checked){ document.querySelectorAll('.row-cb').forEach(function(cb){cb.checked=checked;}); onRowCheck(); }
+function toggleSelectAllBtn(){
+    var total = document.querySelectorAll('.row-cb').length;
+    var sel = document.querySelectorAll('.row-cb:checked').length;
+    toggleSelectAll(!(total>0 && sel===total));  // select all unless already all selected
+}
 function clearSelection(){ document.querySelectorAll('.row-cb').forEach(function(cb){cb.checked=false;}); var a=document.getElementById('select-all-cb'); if(a)a.checked=false; document.getElementById('bulk-bar').classList.add('hidden'); }
 function bulkDelete(){
     var ids = getSelectedIds();
@@ -984,7 +1177,7 @@ function applyBulkEdit(){
         value = raw;
     }
     var n = getSelectedIds().length;
-    if (!confirm('Set “'+opt.textContent+'” on '+n+' record(s)?')) return;
+    if (!confirm('Set "'+opt.textContent+'" on '+n+' record(s)?')) return;
     bulkAction('set_cell', {column_id: parseInt(sel.value), value: value});
 }
 
@@ -1011,8 +1204,9 @@ function doSaveView(e){
 }
 function updateCurrentView(){
     if (!VIEW_ID) return;
+    var b = event.target;
     fetch('/api/views/'+VIEW_ID+'/update', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(viewPayload())})
-        .then(function(r){return r.json();}).then(function(d){ if(d.ok){ var b=event.target; b.textContent='✓ Updated'; setTimeout(function(){window.location.reload();},700); } });
+        .then(function(r){return r.json();}).then(function(d){ if(d.ok){ b.textContent='✓ Updated'; setTimeout(function(){ window.location = '/view/'+VIEW_ID; },500); } });
 }
 
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }

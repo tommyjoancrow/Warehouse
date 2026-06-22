@@ -5,19 +5,32 @@
 {% set primary = columns[0] if columns else None %}
 {% set title_val = (cells.get(primary.id, '') if primary else '') %}
 
-<div class="editor-shell">
+<div class="editor-shell" data-mode="{{ detail_mode or 'crm' }}" id="editor-shell">
     <div class="editor-header">
         <div class="editor-header-left">
-            <a href="/table/{{ table.id }}" class="btn-back">← {{ table.icon }} {{ table.name }}</a>
+            {% if back_view is defined and back_view %}
+            <a href="/view/{{ back_view.id }}" class="btn-back">← {{ back_view.name }}</a>
+            {% else %}
+            <a href="/table/{{ table.id }}" class="btn-back">← {{ table.name }}</a>
+            {% endif %}
+            <div class="mode-toggle">
+                <button type="button" class="mode-btn {% if (detail_mode or 'crm') == 'crm' %}active{% endif %}" onclick="switchEditorMode('crm')">☰ CRM</button>
+                <button type="button" class="mode-btn {% if (detail_mode or 'crm') == 'writing' %}active{% endif %}" onclick="switchEditorMode('writing')">✍ Write</button>
+            </div>
         </div>
         <div class="editor-header-right">
             {% if record %}
             <span id="autosave-status" class="autosave-status"></span>
-            <form method="post" action="/record/{{ record.id }}/delete" style="display:inline" onsubmit="return confirm('Move to trash?')">
-                <button class="btn-danger-outline btn-sm">🗑 Trash</button>
+            <form method="post" action="/record/{{ record.id }}/archive" style="display:inline">
+                {% if view_id %}<input type="hidden" name="view_id" value="{{ view_id }}">{% endif %}
+                <button type="submit" class="icon-action-btn" title="{% if record.archived %}Unarchive{% else %}Archive{% endif %}">{% if record.archived %}📤{% else %}📥{% endif %}</button>
+            </form>
+            <form method="post" action="/record/{{ record.id }}/delete" style="display:inline" onsubmit="return confirm('Move this record to trash?')">
+                <button type="submit" class="icon-action-btn" title="Trash">🗑</button>
             </form>
             {% endif %}
-            <button type="submit" form="record-form" class="btn-primary">Save</button>
+            <a href="{% if view_id %}/view/{{ view_id }}{% else %}/table/{{ table.id }}{% endif %}" class="btn-close-nosave">Close without saving</a>
+            <button type="submit" form="record-form" class="btn-primary">Save and close</button>
         </div>
     </div>
 
@@ -38,15 +51,22 @@
             {% for c in columns %}
                 {% if not loop.first %}
                 {% set raw = cells.get(c.id, '') %}
-                <div class="rec-field">
-                    <label class="rec-label">
+                <div class="rec-field" data-type="{{ c.type }}" data-col-id="{{ c.id }}">
+                    <label class="rec-label rec-label-edit" onclick="openFieldEdit({{ c.id }})" title="Click to edit this field">
                         {{ c.name }}
-                        <button type="button" class="rec-field-edit" onclick="openFieldEdit({{ c.id }})" title="Edit field">▾</button>
                     </label>
                     <div class="rec-value">
                         {% if c.type == 'longtext' %}
                             <div class="rich-editor" data-col="{{ c.id }}">{{ raw | safe }}</div>
                             <input type="hidden" name="col_{{ c.id }}" id="rich-input-{{ c.id }}">
+                        {% elif c.type == 'backlinks' %}
+                            <div class="backlinks-list">
+                                {% for b in (backlinks.get(c.id, []) if backlinks else []) %}
+                                <a href="/record/{{ b.id }}{% if view_id %}?view={{ view_id }}{% endif %}" class="chip chip-link">↩ {{ b.name }}</a>
+                                {% else %}
+                                <span class="rec-hint">No records link here yet.</span>
+                                {% endfor %}
+                            </div>
                         {% elif c.type == 'checkbox' %}
                             <input type="checkbox" name="col_{{ c.id }}" value="1" {% if raw in ('1','true','True') %}checked{% endif %}>
                         {% elif c.type == 'select' %}
@@ -89,7 +109,7 @@
                             <div class="link-picker" data-col="{{ c.id }}" data-target="{{ link_opts.target_table_id if link_opts else '' }}">
                                 <div class="link-chips" id="link-chips-{{ c.id }}">
                                     {% for lid in linked %}
-                                    <span class="chip chip-link" data-id="{{ lid }}">↗ {{ link_display.get(lid, 'Record ' ~ lid) }}
+                                    <span class="chip chip-link" data-id="{{ lid }}"><a href="/record/{{ lid }}{% if view_id %}?view={{ view_id }}{% endif %}" class="chip-link-label">↗ {{ link_display.get(lid, 'Record ' ~ lid) }}</a>
                                         <button type="button" class="chip-x" onclick="removeLink({{ c.id }}, {{ lid }})">✕</button>
                                         <input type="hidden" name="col_{{ c.id }}" value="{{ lid }}">
                                     </span>
@@ -140,9 +160,16 @@
             <label>Options (comma-separated)</label>
             <input type="text" name="options" class="form-input" id="ef-options">
         </div>
+        <div class="form-group hidden" id="ef-backlink-wrap">
+            <p class="rec-hint">Backlinks list every record that links to this one. Optionally limit which appear:</p>
+            <div class="bl-filter-row" id="ef-bl-config"></div>
+        </div>
         <div class="edit-col-footer">
             <button type="submit" class="btn-primary">Save</button>
-            <button type="button" class="btn-ghost btn-danger" onclick="deleteField()">🗑 Delete field</button>
+        </div>
+        <div class="danger-zone">
+            <button type="button" class="btn-danger-solid" onclick="deleteField()">🗑 Delete entire data field</button>
+            <p class="danger-note">Permanently removes this field and its data from every record. This cannot be undone.</p>
         </div>
     </form>
 </div>
@@ -152,10 +179,16 @@
 <script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
 <script>
 var EDITOR_COLUMNS = {{ columns | tojson }};
+var OPS_BY_TYPE = {{ ops_by_type | tojson if ops_by_type is defined else '{}' }};
 var efColById = {}; EDITOR_COLUMNS.forEach(function(c){ efColById[c.id]=c; });
 function onFieldTypeChange(){
     var t = document.getElementById('ef-type').value;
     document.getElementById('ef-options-wrap').classList.toggle('hidden', !(t==='select'||t==='multiselect'));
+    var bl = document.getElementById('ef-backlink-wrap');
+    if (bl) {
+        bl.classList.toggle('hidden', t!=='backlinks');
+        if (t==='backlinks') renderBacklinkFilter('ef-bl-config', EDITOR_COLUMNS, OPS_BY_TYPE, {});
+    }
 }
 function openFieldEdit(colId){
     var c = efColById[colId];
@@ -167,6 +200,11 @@ function openFieldEdit(colId){
     if (c.type==='select'||c.type==='multiselect') document.getElementById('ef-options').value = (opts||[]).join(', ');
     f.dataset.colId = colId;
     onFieldTypeChange();
+    if (c.type==='backlinks'){
+        var blo = {}; try { blo = JSON.parse(c.options||'{}') || {}; } catch(e){}
+        renderBacklinkFilter('ef-bl-config', EDITOR_COLUMNS, OPS_BY_TYPE,
+            {field: blo.filter_col || '', op: blo.filter_op || '', val: blo.filter_val || ''});
+    }
     openModal('modal-edit-field');
 }
 function deleteField(){
@@ -180,10 +218,68 @@ function deleteField(){
 var richEditors = [];
 document.querySelectorAll('.rich-editor').forEach(function(div){
     var colId = div.dataset.col;
-    var q = new Quill(div, { theme: 'snow', modules: { toolbar: false } });
+    var q = new Quill(div, { theme: 'snow', modules: {
+        toolbar: false,
+        keyboard: { bindings: {
+            checklist: { key: 'C', shortKey: true, shiftKey: true, handler: function(){ this.quill.format('list', 'unchecked'); } }
+        } }
+    } });
     richEditors.push({col: colId, quill: q});
     setupNoteLink(q);
+    setupTemplatePicker(q);
 });
+
+// ── Template autofill (Ctrl + /) ──────────────────────────────
+var _templateCache = null;
+function setupTemplatePicker(quill){
+    var dd = document.createElement('div');
+    dd.className = 'note-link-dropdown hidden';
+    document.body.appendChild(dd);
+    quill.root.addEventListener('keydown', function(e){
+        if ((e.ctrlKey || e.metaKey) && e.key === '/'){
+            e.preventDefault();
+            openPicker();
+        }
+    });
+    function openPicker(){
+        var sel = quill.getSelection(true);
+        var insertAt = sel ? sel.index : quill.getLength();
+        function show(items){
+            if (!items.length){ dd.innerHTML = '<div class="nld-item">No templates — add some in Settings</div>'; }
+            else {
+                dd.innerHTML = items.map(function(t,i){
+                    return '<div class="nld-item'+(i===0?' nld-active':'')+'" data-id="'+t.id+'">'+escapeHtml(t.name)+'</div>';
+                }).join('');
+                dd.querySelectorAll('.nld-item').forEach(function(el){
+                    el.onmousedown = function(ev){ ev.preventDefault(); insertTpl(el.dataset.id); };
+                });
+            }
+            var b = quill.getBounds(insertAt); var er = quill.root.getBoundingClientRect();
+            dd.style.left = (er.left + b.left) + 'px';
+            dd.style.top = (er.top + window.scrollY + b.bottom + 4) + 'px';
+            dd.classList.remove('hidden');
+            _pickItems = items; _pickQuill = quill; _pickAt = insertAt;
+        }
+        if (_templateCache) show(_templateCache);
+        else fetch('/api/templates').then(function(r){return r.json();}).then(function(items){ _templateCache = items; show(items); });
+    }
+    var _pickItems, _pickQuill, _pickAt;
+    quill.root.addEventListener('keydown', function(e){
+        if (dd.classList.contains('hidden')) return;
+        var items = dd.querySelectorAll('.nld-item'); var act = dd.querySelector('.nld-active');
+        if (e.key === 'ArrowDown'){ e.preventDefault(); var n=act?act.nextElementSibling:items[0]; if(n){ if(act)act.classList.remove('nld-active'); n.classList.add('nld-active'); } }
+        else if (e.key === 'ArrowUp'){ e.preventDefault(); var p=act?act.previousElementSibling:items[items.length-1]; if(p){ if(act)act.classList.remove('nld-active'); p.classList.add('nld-active'); } }
+        else if (e.key === 'Enter' && act && act.dataset.id){ e.preventDefault(); insertTpl(act.dataset.id); }
+        else if (e.key === 'Escape'){ dd.classList.add('hidden'); }
+    });
+    function insertTpl(id){
+        var t = (_templateCache || []).filter(function(x){ return String(x.id) === String(id); })[0];
+        dd.classList.add('hidden');
+        if (!t) return;
+        var at = quill.getSelection(true);
+        quill.clipboard.dangerouslyPasteHTML(at ? at.index : quill.getLength(), t.body || '');
+    }
+}
 
 // On submit, dump each Quill's HTML into its hidden input
 document.getElementById('record-form').addEventListener('submit', function(){
@@ -215,7 +311,7 @@ function addLink(colId, id, label){
     var span = document.createElement('span');
     span.className = 'chip chip-link';
     span.dataset.id = id;
-    span.innerHTML = '↗ '+escapeHtml(label)+' <button type="button" class="chip-x" onclick="removeLink('+colId+','+id+')">✕</button><input type="hidden" name="col_'+colId+'" value="'+id+'">';
+    span.innerHTML = '<a href="/record/'+id+'{% if view_id %}?view={{ view_id }}{% endif %}" class="chip-link-label">↗ '+escapeHtml(label)+'</a> <button type="button" class="chip-x" onclick="removeLink('+colId+','+id+')">✕</button><input type="hidden" name="col_'+colId+'" value="'+id+'">';
     chips.appendChild(span);
     document.getElementById('link-results-'+colId).classList.add('hidden');
     var picker = document.querySelector('.link-picker[data-col="'+colId+'"]');
@@ -348,5 +444,98 @@ document.addEventListener('click', function(e){
     if(!e.target.closest('.link-picker')){ document.querySelectorAll('.link-results').forEach(function(b){b.classList.add('hidden');}); }
     if(!e.target.closest('.tag-picker')){ document.querySelectorAll('.tag-results').forEach(function(b){b.classList.add('hidden');}); }
 });
+
+// ── Writing / CRM mode toggle ─────────────────────────────────
+function applyWritingMode(mode) {
+    var shell = document.getElementById('editor-shell');
+    var fieldsDiv = document.querySelector('.rec-fields');
+    if (!fieldsDiv) return;
+    // Remove existing writing layout if any, restoring fields cleanly
+    var existing = fieldsDiv.querySelector('.writing-layout');
+    if (existing) {
+        Array.from(existing.querySelectorAll('.rec-field')).forEach(function(f){
+            f.classList.remove('wd-empty','wd-filled');
+            var inp = f.querySelector('input,select,textarea');
+            if (inp) inp.style.width = '';
+            fieldsDiv.appendChild(f);
+        });
+        existing.remove();
+    }
+    shell.dataset.mode = mode;
+    if (mode !== 'writing') return;
+
+    var layout = document.createElement('div');
+    layout.className = 'writing-layout';
+
+    var main = document.createElement('div');
+    main.className = 'writing-main';
+
+    var details = document.createElement('div');
+    details.className = 'writing-details';
+    if (DETAIL_COLLAPSED) details.classList.add('collapsed');
+    details.innerHTML =
+        '<button type="button" class="writing-details-toggle" onclick="toggleWritingDetails()">' +
+            '<span class="wd-caret">▾</span><span>Details</span></button>' +
+        '<div class="writing-details-content" id="writing-details-content"></div>';
+    var content = details.querySelector('#writing-details-content');
+
+    Array.from(fieldsDiv.querySelectorAll('.rec-field')).forEach(function(f){
+        if (f.dataset.type === 'longtext') main.appendChild(f);
+        else content.appendChild(f);
+    });
+    if (!main.children.length) {
+        // No body field — just show everything, no details strip
+        Array.from(content.querySelectorAll('.rec-field')).forEach(function(f){ main.appendChild(f); });
+        layout.appendChild(main);
+    } else {
+        layout.appendChild(main);
+        layout.appendChild(details);   // details pinned to the very bottom
+        compactDetailFields(content);
+    }
+    fieldsDiv.appendChild(layout);
+}
+function compactDetailFields(container){
+    Array.from(container.querySelectorAll('.rec-field')).forEach(function(f){
+        var inp = f.querySelector('input,select,textarea');
+        markFieldFill(f);
+        if (inp && ['text','email','url','tel','number','search'].indexOf(inp.type) !== -1){
+            sizeInput(inp);
+            inp.addEventListener('input', function(){ sizeInput(inp); markFieldFill(f); });
+        } else if (inp){
+            inp.addEventListener('change', function(){ markFieldFill(f); });
+        }
+    });
+}
+function sizeInput(inp){
+    var len = (inp.value || '').length;
+    inp.style.width = (Math.max(len, 2) + 1) + 'ch';
+}
+function markFieldFill(f){
+    var type = f.dataset.type, has = false;
+    if (type === 'checkbox') has = true;
+    else if (type === 'link' || type === 'multiselect' || type === 'tag' || type === 'backlinks')
+        has = !!f.querySelector('.chip, .ms-chip.ms-active');
+    else {
+        var inp = f.querySelector('input,select,textarea');
+        has = !!(inp && inp.value && String(inp.value).trim());
+    }
+    f.classList.toggle('wd-empty', !has);
+    f.classList.toggle('wd-filled', has);
+}
+function toggleWritingDetails() {
+    var details = document.querySelector('.writing-details');
+    if (!details) return;
+    details.classList.toggle('collapsed');
+}
+function switchEditorMode(mode) {
+    // Per-record toggle only — does NOT change the view's saved default.
+    document.querySelectorAll('.mode-btn').forEach(function(b){
+        b.classList.toggle('active', (b.getAttribute('onclick')||'').indexOf("'"+mode+"'") !== -1);
+    });
+    applyWritingMode(mode);
+}
+// Apply mode on load
+var DETAIL_COLLAPSED = {{ 'true' if (detail_collapsed is defined and detail_collapsed) else 'false' }};
+applyWritingMode('{{ detail_mode or "crm" }}');
 </script>
 {% endblock %}

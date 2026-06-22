@@ -25,53 +25,37 @@
         <nav class="sidebar-nav">
             <div class="nav-section">
                 <div class="nav-section-header">
-                    <span>Tables</span>
-                    <button class="nav-add-btn" onclick="openModal('modal-add-table')" title="New table">+</button>
+                    <span>Views</span>
+                    <button class="nav-add-btn" onclick="createView()" title="New view">+</button>
                 </div>
 
-                {% for t in sidebar_tables %}
-                <div class="nav-folder-wrap">
-                    <div class="nav-item-row">
-                        <a href="/table/{{ t.id }}"
-                           class="nav-item {% if active_table_id is defined and active_table_id == t.id and not active_view_id %}active{% endif %}">
-                            <span class="nav-icon">{{ t.icon }}</span>
-                            <span class="nav-label">{{ t.name }}</span>
-                            <span class="nav-count">{{ t.record_count }}</span>
-                        </a>
-                        <div class="nav-more-wrap">
-                            <button class="nav-more-btn" onclick="toggleSidebarMenu(event,'tm-{{ t.id }}')" title="Options">···</button>
-                            <div class="sidebar-menu hidden" id="tm-{{ t.id }}">
-                                <div class="sidebar-menu-item" onclick="openRenameTable({{ t.id }}, '{{ t.name | replace("'", "\\'") }}', '{{ t.icon }}')">✎ Rename</div>
-                                <div class="sidebar-menu-item" onclick="newRecordIn({{ t.id }})">+ New record</div>
-                                <div class="sidebar-menu-divider"></div>
-                                <form method="post" action="/api/tables/{{ t.id }}/delete" onsubmit="return confirm('Delete this table and ALL its records? This cannot be undone.')">
-                                    <button type="submit" class="sidebar-menu-item sidebar-menu-danger">🗑 Delete table</button>
-                                </form>
-                            </div>
+                {% if workspace %}
+                <div class="nav-item-row">
+                    <a href="/table/{{ workspace.id }}"
+                       class="nav-item {% if active_table_id is defined and active_table_id == workspace.id and not active_view_id %}active{% endif %}">
+                        <span class="nav-icon">🗂</span>
+                        <span class="nav-label">All records</span>
+                        <span class="nav-count">{{ workspace_total }}</span>
+                    </a>
+                </div>
+                {% endif %}
+
+                {% for v in sidebar_views %}
+                <div class="nav-item-row">
+                    <a href="/view/{{ v.id }}"
+                       class="nav-item nav-saved-view {% if active_view_id is defined and active_view_id == v.id %}active{% endif %}">
+                        <span class="nav-icon">{% if v.view_type == 'calendar' %}📅{% elif v.view_type == 'card' %}🃏{% else %}▦{% endif %}</span>
+                        <span class="nav-label">{{ v.name }}</span>
+                    </a>
+                    <div class="nav-more-wrap">
+                        <button class="nav-more-btn" onclick="toggleSidebarMenu(event,'vm-{{ v.id }}')">···</button>
+                        <div class="sidebar-menu hidden" id="vm-{{ v.id }}">
+                            <div class="sidebar-menu-item" onclick="openRenameView({{ v.id }}, '{{ v.name | replace("'", "\\'") }}')">✎ Rename</div>
+                            <form method="post" action="/api/views/{{ v.id }}/delete" onsubmit="return confirm('Delete this view? (Your records are not deleted.)')">
+                                <button type="submit" class="sidebar-menu-item sidebar-menu-danger">🗑 Delete view</button>
+                            </form>
                         </div>
                     </div>
-                    {% if t.views %}
-                    <div class="nav-children">
-                        {% for v in t.views %}
-                        <div class="nav-item-row">
-                            <a href="/view/{{ v.id }}"
-                               class="nav-item nav-saved-view {% if active_view_id is defined and active_view_id == v.id %}active{% endif %}">
-                                <span class="nav-icon">{% if v.view_type == 'calendar' %}📅{% elif v.view_type == 'card' %}🃏{% else %}▦{% endif %}</span>
-                                <span class="nav-label">{{ v.name }}</span>
-                            </a>
-                            <div class="nav-more-wrap">
-                                <button class="nav-more-btn" onclick="toggleSidebarMenu(event,'vm-{{ v.id }}')">···</button>
-                                <div class="sidebar-menu hidden" id="vm-{{ v.id }}">
-                                    <div class="sidebar-menu-item" onclick="openRenameView({{ v.id }}, '{{ v.name | replace("'", "\\'") }}')">✎ Rename</div>
-                                    <form method="post" action="/api/views/{{ v.id }}/delete" onsubmit="return confirm('Delete this view?')">
-                                        <button type="submit" class="sidebar-menu-item sidebar-menu-danger">🗑 Delete view</button>
-                                    </form>
-                                </div>
-                            </div>
-                        </div>
-                        {% endfor %}
-                    </div>
-                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
@@ -94,39 +78,6 @@
 
 <!-- MODALS -->
 <div class="modal-overlay hidden" id="modal-overlay" onclick="closeModals()"></div>
-
-<div class="modal hidden" id="modal-add-table">
-    <div class="modal-header"><h3>New Table</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
-    <form action="/api/tables" method="post">
-        <div class="form-group">
-            <label>Icon</label>
-            <input type="text" name="icon" value="📋" class="form-input" style="max-width:80px" maxlength="2">
-        </div>
-        <div class="form-group">
-            <label>Name</label>
-            <input type="text" name="name" placeholder="e.g. Projects, Books, Clients" class="form-input" autofocus>
-        </div>
-        <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px">
-            A new table starts with a single <strong>Name</strong> column and an “All records” view. Add more columns from the table toolbar.
-        </p>
-        <button type="submit" class="btn-primary">Create Table</button>
-    </form>
-</div>
-
-<div class="modal hidden" id="modal-rename-table">
-    <div class="modal-header"><h3>Rename Table</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
-    <form id="rename-table-form" action="" method="post">
-        <div class="form-group">
-            <label>Icon</label>
-            <input type="text" name="icon" id="rename-table-icon" class="form-input" style="max-width:80px" maxlength="2">
-        </div>
-        <div class="form-group">
-            <label>Name</label>
-            <input type="text" name="name" id="rename-table-input" class="form-input">
-        </div>
-        <button type="submit" class="btn-primary">Save</button>
-    </form>
-</div>
 
 <div class="modal hidden" id="modal-rename-view">
     <div class="modal-header"><h3>Rename View</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
@@ -163,22 +114,20 @@
 
 <script src="/static/app.js"></script>
 <script>
-function openRenameTable(id, name, icon) {
-    var f = document.getElementById('rename-table-form');
-    f.action = '/api/tables/' + id + '/rename';
-    document.getElementById('rename-table-input').value = name;
-    document.getElementById('rename-table-icon').value = icon;
-    openModal('modal-rename-table');
-}
 function openRenameView(id, name) {
     var f = document.getElementById('rename-view-form');
     f.action = '/api/views/' + id + '/rename';
     document.getElementById('rename-view-input').value = name;
     openModal('modal-rename-view');
 }
-function newRecordIn(tableId) {
-    window.location = '/record/new?table_id=' + tableId;
+{% if workspace %}
+function createView() {
+    fetch('/api/views', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({table_id: {{ workspace.id }}, name: 'New view', view_type: 'grid'})})
+        .then(function(r){return r.json();})
+        .then(function(d){ if(d.ok) window.location = '/view/' + d.id; });
 }
+{% endif %}
 </script>
 {% block scripts %}{% endblock %}
 </body>

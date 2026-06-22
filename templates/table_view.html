@@ -16,7 +16,7 @@
         {% if view %}<span class="view-subtitle">in {{ table.name }}</span>{% endif %}
     </div>
     <div class="view-header-right">
-        <a href="/record/new?table_id={{ table.id }}" class="btn-primary">+ New record</a>
+        <a href="/record/new?table_id={{ table.id }}{% if view %}&view_id={{ view.id }}{% endif %}" class="btn-primary">+ New record</a>
     </div>
 </div>
 
@@ -159,9 +159,9 @@
             {% endfor %}
         </tbody>
     </table>
-    <button type="button" class="grid-add-row" onclick="addRow()">+ New record</button>
+    <a href="/record/new?table_id={{ table.id }}{% if view %}&view_id={{ view.id }}{% endif %}" class="grid-add-row">+ New record</a>
     {% if not records %}
-    <div class="empty-state-inline">No records match. <a href="{{ request.path }}">Clear filters</a> or <a href="/record/new?table_id={{ table.id }}">add one</a>.</div>
+    <div class="empty-state-inline">No records match. <a href="{{ request.path }}">Clear filters</a> or <a href="/record/new?table_id={{ table.id }}{% if view %}&view_id={{ view.id }}{% endif %}">add one</a>.</div>
     {% endif %}
 </div>
 
@@ -217,7 +217,7 @@
                 <div class="cal-day {% if not day.in_month %}cal-out{% endif %} {% if day.is_today %}cal-today{% endif %}">
                     <div class="cal-day-top">
                         <span class="cal-day-num">{{ day.day }}</span>
-                        <a href="/record/new?table_id={{ table.id }}" class="cal-add-btn" title="New record">+</a>
+                        <a href="/record/new?table_id={{ table.id }}{% if view %}&view_id={{ view.id }}{% endif %}" class="cal-add-btn" title="New record">+</a>
                     </div>
                     {% for r in day.records %}
                     <a href="/record/{{ r.id }}" class="cal-event">{{ r.label }}</a>
@@ -251,10 +251,7 @@
             <input type="text" name="options" placeholder="Low, Medium, High" class="form-input">
         </div>
         <div class="form-group hidden" id="add-col-link-wrap">
-            <label>Links to table</label>
-            <select name="target_table_id" class="form-input">
-                {% for t in all_tables %}<option value="{{ t.id }}">{{ t.icon }} {{ t.name }}</option>{% endfor %}
-            </select>
+            <p class="rec-hint">Links point to other records in your workspace.</p>
         </div>
         <button type="submit" class="btn-primary">Add Column</button>
     </form>
@@ -279,10 +276,7 @@
             <input type="text" name="options" class="form-input" id="edit-col-options">
         </div>
         <div class="form-group hidden" id="edit-col-link-wrap">
-            <label>Links to table</label>
-            <select name="target_table_id" class="form-input" id="edit-col-target">
-                {% for t in all_tables %}<option value="{{ t.id }}">{{ t.icon }} {{ t.name }}</option>{% endfor %}
-            </select>
+            <p class="rec-hint">Links point to other records in your workspace.</p>
         </div>
         <div class="edit-col-footer">
             <button type="submit" class="btn-primary">Save</button>
@@ -425,7 +419,6 @@ function openColumnEdit(colId){
     var opts = [];
     try { opts = JSON.parse(c.options || '[]'); } catch(e){}
     if (c.type==='select'||c.type==='multiselect') document.getElementById('edit-col-options').value = (opts||[]).join(', ');
-    if (c.type==='link' && opts && opts.target_table_id) document.getElementById('edit-col-target').value = opts.target_table_id;
     f.dataset.colId = colId;
     onColTypeChange('edit');
     openModal('modal-edit-column');

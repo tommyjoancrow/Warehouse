@@ -120,73 +120,77 @@ def init_db():
     conn.close()
 
 def seed(conn):
+    """One workspace table holding every record. 'Companies', 'People', etc. are
+    VIEWS that filter on the Type column and hide the columns that don't apply."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    def add_table(name, icon, pos):
-        return conn.execute("INSERT INTO tables (name,icon,position,created_at) VALUES (?,?,?,?)",
-                            (name, icon, pos, now)).lastrowid
-    def add_col(tid, name, typ, pos, options=None):
+    today = date.today()
+    tid = conn.execute("INSERT INTO tables (name,icon,position,created_at) VALUES (?,?,?,?)",
+                       ('Workspace', '🗂', 0, now)).lastrowid
+
+    def add_col(name, typ, pos, options=None):
         return conn.execute("INSERT INTO columns (table_id,name,type,position,options,created_at) VALUES (?,?,?,?,?,?)",
                             (tid, name, typ, pos, json.dumps(options or []), now)).lastrowid
-    def add_record(tid, cells):
+    def add_record(cells):
         rid = conn.execute("INSERT INTO records (table_id,created_at,updated_at) VALUES (?,?,?)",
                            (tid, now, now)).lastrowid
         for cid, val in cells.items():
             conn.execute("INSERT INTO cell_values (record_id,column_id,value) VALUES (?,?,?)", (rid, cid, val))
         return rid
-    def add_view(tid, name, vtype, filters, sorts, pos, date_col=None):
+    def add_view(name, vtype, filters, sorts, hidden, pos, date_col=None):
         conn.execute("""INSERT INTO views (table_id,name,view_type,filters_json,filter_logic,sorts_json,hidden_columns_json,date_column_id,position,created_at)
                         VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                     (tid, name, vtype, json.dumps(filters), 'AND', json.dumps(sorts), '[]', date_col, pos, now))
+                     (tid, name, vtype, json.dumps(filters), 'AND', json.dumps(sorts), json.dumps(hidden), date_col, pos, now))
 
-    # Companies
-    comp = add_table('Companies', '🏢', 0)
-    c_name = add_col(comp, 'Name', 'text', 0)
-    c_web  = add_col(comp, 'Website', 'url', 1)
-    c_ind  = add_col(comp, 'Industry', 'select', 2, ['Software','Hardware','Media','Finance','Other'])
-    acme  = add_record(comp, {c_name:'Acme Corp', c_web:'https://acme.example', c_ind:'Software'})
-    globex= add_record(comp, {c_name:'Globex', c_web:'https://globex.example', c_ind:'Hardware'})
-    initech=add_record(comp, {c_name:'Initech', c_web:'https://initech.example', c_ind:'Finance'})
-    add_view(comp, 'All companies', 'grid', [], [{'c':c_name,'d':'asc'}], 0)
+    # ── One shared set of columns. Name is primary (position 0). ──
+    c_name   = add_col('Name', 'text', 0)
+    c_type   = add_col('Type', 'select', 1, ['Company','Person','Task','Note'])
+    c_status = add_col('Status', 'select', 2, ['Lead','Active','Inactive','To do','In progress','Done'])
+    c_email  = add_col('Email', 'email', 3)
+    c_phone  = add_col('Phone', 'phone', 4)
+    c_web    = add_col('Website', 'url', 5)
+    c_link   = add_col('Linked to', 'link', 6, {'target_table_id': tid})
+    c_due    = add_col('Due Date', 'date', 7)
+    c_pri    = add_col('Priority', 'select', 8, ['Low','Medium','High'])
+    c_notes  = add_col('Notes', 'longtext', 9)
 
-    # People
-    ppl = add_table('People', '👤', 1)
-    p_name = add_col(ppl, 'Name', 'text', 0)
-    p_email= add_col(ppl, 'Email', 'email', 1)
-    p_phone= add_col(ppl, 'Phone', 'phone', 2)
-    p_comp = add_col(ppl, 'Company', 'link', 3, {'target_table_id': comp})
-    p_stat = add_col(ppl, 'Status', 'select', 4, ['Lead','Active','Inactive'])
-    p_notes= add_col(ppl, 'Notes', 'longtext', 5)
-    add_record(ppl, {p_name:'Alice Chen', p_email:'alice@acme.example', p_phone:'555-0100',
-                     p_comp:json.dumps([acme]), p_stat:'Active', p_notes:'<p>Met at the <strong>2026 conference</strong>.</p>'})
-    add_record(ppl, {p_name:'Bob Martinez', p_email:'bob@globex.example', p_phone:'555-0142',
-                     p_comp:json.dumps([globex]), p_stat:'Lead', p_notes:'<p>Intro via Alice.</p>'})
-    add_record(ppl, {p_name:'Carol Singh', p_email:'carol@initech.example', p_phone:'555-0199',
-                     p_comp:json.dumps([initech]), p_stat:'Inactive', p_notes:''})
-    add_view(ppl, 'All people', 'grid', [], [{'c':p_name,'d':'asc'}], 0)
-    add_view(ppl, 'Active', 'grid', [{'c':p_stat,'op':'equals','v':'Active'}], [{'c':p_name,'d':'asc'}], 1)
+    # ── Records (all in the one table, distinguished by Type) ──
+    acme   = add_record({c_name:'Acme Corp', c_type:'Company', c_web:'https://acme.example', c_status:'Active'})
+    globex = add_record({c_name:'Globex', c_type:'Company', c_web:'https://globex.example', c_status:'Active'})
+    initech= add_record({c_name:'Initech', c_type:'Company', c_web:'https://initech.example', c_status:'Inactive'})
 
-    # Tasks
-    tsk = add_table('Tasks', '✅', 2)
-    t_title = add_col(tsk, 'Title', 'text', 0)
-    t_done  = add_col(tsk, 'Done', 'checkbox', 1)
-    t_due   = add_col(tsk, 'Due Date', 'date', 2)
-    t_pri   = add_col(tsk, 'Priority', 'select', 3, ['Low','Medium','High'])
-    t_who   = add_col(tsk, 'Related Person', 'link', 4, {'target_table_id': ppl})
-    today = date.today()
-    add_record(tsk, {t_title:'Follow up with Alice', t_done:'0', t_due:(today+timedelta(days=2)).isoformat(), t_pri:'High'})
-    add_record(tsk, {t_title:'Send proposal to Globex', t_done:'0', t_due:(today+timedelta(days=5)).isoformat(), t_pri:'Medium'})
-    add_record(tsk, {t_title:'Archive old contacts', t_done:'1', t_due:(today-timedelta(days=3)).isoformat(), t_pri:'Low'})
-    add_view(tsk, 'All tasks', 'grid', [], [{'c':t_due,'d':'asc'}], 0)
-    add_view(tsk, 'Open tasks', 'grid', [{'c':t_done,'op':'is_false','v':''}], [{'c':t_due,'d':'asc'}], 1)
-    add_view(tsk, 'Calendar', 'calendar', [], [], 2, date_col=t_due)
+    alice = add_record({c_name:'Alice Chen', c_type:'Person', c_email:'alice@acme.example', c_phone:'555-0100',
+                        c_link:json.dumps([acme]), c_status:'Active', c_notes:'<p>Met at the <strong>2026 conference</strong>.</p>'})
+    add_record({c_name:'Bob Martinez', c_type:'Person', c_email:'bob@globex.example', c_phone:'555-0142',
+                c_link:json.dumps([globex]), c_status:'Lead', c_notes:'<p>Intro via Alice.</p>'})
+    add_record({c_name:'Carol Singh', c_type:'Person', c_email:'carol@initech.example', c_phone:'555-0199',
+                c_link:json.dumps([initech]), c_status:'Inactive'})
 
-    # Notes
-    nts = add_table('Notes', '📝', 3)
-    n_title = add_col(nts, 'Title', 'text', 0)
-    n_body  = add_col(nts, 'Body', 'longtext', 1)
-    n_date  = add_col(nts, 'Created', 'date', 2)
-    add_record(nts, {n_title:'Welcome', n_body:'<p>This is your new <strong>tables</strong> workspace. Create tables, add columns, and build views.</p>', n_date:today.isoformat()})
-    add_view(nts, 'All notes', 'grid', [], [{'c':n_date,'d':'desc'}], 0)
+    add_record({c_name:'Follow up with Alice', c_type:'Task', c_status:'To do',
+                c_due:(today+timedelta(days=2)).isoformat(), c_pri:'High', c_link:json.dumps([alice])})
+    add_record({c_name:'Send proposal to Globex', c_type:'Task', c_status:'To do',
+                c_due:(today+timedelta(days=5)).isoformat(), c_pri:'Medium'})
+    add_record({c_name:'Archive old contacts', c_type:'Task', c_status:'Done',
+                c_due:(today-timedelta(days=3)).isoformat(), c_pri:'Low'})
+
+    add_record({c_name:'Welcome', c_type:'Note', c_due:today.isoformat(),
+                c_notes:'<p>Everything lives in <strong>one table</strong>. The items in the sidebar are <em>views</em> — saved filters into this table. Try editing a view\'s filters, or make your own.</p>'})
+
+    # ── Views (the sidebar). Each hides columns that don't apply. ──
+    ALL = [c_name,c_type,c_status,c_email,c_phone,c_web,c_link,c_due,c_pri,c_notes]
+    def hide_all_but(keep):
+        return [c for c in ALL if c not in keep]
+
+    add_view('All records', 'grid', [], [{'c':c_name,'d':'asc'}], [], 0)
+    add_view('Companies', 'grid', [{'c':c_type,'op':'equals','v':'Company'}],
+             [{'c':c_name,'d':'asc'}], hide_all_but([c_name,c_status,c_web,c_link,c_notes]), 1)
+    add_view('People', 'grid', [{'c':c_type,'op':'equals','v':'Person'}],
+             [{'c':c_name,'d':'asc'}], hide_all_but([c_name,c_status,c_email,c_phone,c_link,c_notes]), 2)
+    add_view('Tasks', 'grid', [{'c':c_type,'op':'equals','v':'Task'}],
+             [{'c':c_due,'d':'asc'}], hide_all_but([c_name,c_status,c_due,c_pri,c_link]), 3)
+    add_view('Task calendar', 'calendar', [{'c':c_type,'op':'equals','v':'Task'}],
+             [], [], 4, date_col=c_due)
+    add_view('Notes', 'grid', [{'c':c_type,'op':'equals','v':'Note'}],
+             [{'c':c_due,'d':'desc'}], hide_all_but([c_name,c_notes,c_due]), 5)
 
     conn.commit()
 
@@ -402,18 +406,22 @@ def build_grid(conn, recs, columns):
     return recs, link_names
 
 # ── Context (sidebar) ───────────────────────────────────────────
+def workspace_table(conn):
+    return conn.execute("SELECT * FROM tables ORDER BY id LIMIT 1").fetchone()
+
 @app.context_processor
 def inject_sidebar():
     conn = get_db()
-    tables = []
-    for t in conn.execute("SELECT * FROM tables ORDER BY position, id").fetchall():
+    ws = workspace_table(conn)
+    views = []
+    total = 0
+    if ws:
         views = [dict(v) for v in conn.execute(
-            "SELECT * FROM views WHERE table_id=? ORDER BY position, id", (t['id'],)).fetchall()]
-        rc = conn.execute("SELECT COUNT(*) FROM records WHERE table_id=? AND deleted_at IS NULL", (t['id'],)).fetchone()[0]
-        tables.append({'id': t['id'], 'name': t['name'], 'icon': t['icon'], 'views': views, 'record_count': rc})
-    all_tables = [dict(t) for t in conn.execute("SELECT * FROM tables ORDER BY position, id").fetchall()]
+            "SELECT * FROM views WHERE table_id=? ORDER BY position, id", (ws['id'],)).fetchall()]
+        total = conn.execute("SELECT COUNT(*) FROM records WHERE table_id=? AND deleted_at IS NULL", (ws['id'],)).fetchone()[0]
     conn.close()
-    return dict(sidebar_tables=tables, all_tables=all_tables,
+    return dict(workspace=(dict(ws) if ws else None), sidebar_views=views,
+                workspace_total=total, all_tables=([dict(ws)] if ws else []),
                 column_types=COLUMN_TYPES, ops_by_type=OPS_BY_TYPE)
 
 # ── Routes: browsing ────────────────────────────────────────────
@@ -526,15 +534,28 @@ def view_page(view_id):
 @app.route("/record/new")
 def new_record_form():
     table_id = request.args.get('table_id', type=int)
+    view_id = request.args.get('view_id', type=int)
     conn = get_db()
     table = conn.execute("SELECT * FROM tables WHERE id=?", (table_id,)).fetchone()
     if not table:
         conn.close()
         return redirect(url_for('index'))
     columns = get_columns(conn, table_id)
+    # Pre-fill from the originating view's equality filters so the new record
+    # actually lands in that view (e.g. adding from "Companies" sets Type=Company).
+    prefill = {}
+    if view_id:
+        v = conn.execute("SELECT * FROM views WHERE id=?", (view_id,)).fetchone()
+        if v:
+            try:
+                for f in json.loads(v['filters_json']):
+                    if f.get('op') in ('equals', 'is') and f.get('v') != '':
+                        prefill[int(f['c'])] = f['v']
+            except Exception:
+                pass
     conn.close()
     return render_template('record_editor.html', table=dict(table), columns=columns,
-                           record=None, cells={}, link_display={},
+                           record=None, cells=prefill, link_display={},
                            active_table_id=table_id, page_title='New record')
 
 @app.route("/record/<int:record_id>")
@@ -741,8 +762,7 @@ def add_column_route(table_id):
         raw = request.form.get('options', '')
         options = [o.strip() for o in raw.split(',') if o.strip()]
     elif ctype == 'link':
-        ttid = request.form.get('target_table_id', type=int)
-        options = {'target_table_id': ttid}
+        options = {'target_table_id': table_id}  # one workspace: links point within it
     conn = get_db()
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     maxpos = conn.execute("SELECT COALESCE(MAX(position),0)+1 FROM columns WHERE table_id=?", (table_id,)).fetchone()[0]
@@ -769,9 +789,7 @@ def update_column(column_id):
         if raw is not None:
             options = [o.strip() for o in raw.split(',') if o.strip()]
     elif ctype == 'link':
-        ttid = request.form.get('target_table_id', type=int)
-        if ttid:
-            options = {'target_table_id': ttid}
+        options = {'target_table_id': col['table_id']}
     conn.execute("UPDATE columns SET name=?, type=?, options=? WHERE id=?",
                  (name, ctype, json.dumps(options), column_id))
     conn.commit()

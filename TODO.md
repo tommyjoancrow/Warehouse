@@ -45,6 +45,11 @@ tables/columns/records/views model.
 
 ## ✅ Done
 
+- ✅ 2026-06-21 — Collapsed to a **single workspace table**. The sidebar now
+  lists **views** (Companies, People, Tasks, Notes…) instead of tables — each
+  is a saved filter (on a Type column) + hidden-column set into the one table.
+  Adding a record from a view pre-fills that view's filter values so it lands
+  in the right place. Removed table create/rename/delete UI.
 - ✅ 2026-06-21 — Rewrote data model to tables/columns/records/views
   (Access/FileMaker-style). Grid/card/calendar views, record editor with typed
   fields + rich text + link picker, trash, search. _(commit 31eef30)_

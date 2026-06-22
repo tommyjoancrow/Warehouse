@@ -41,6 +41,13 @@ tables/columns/records/views model.
 
 ## ✅ Done
 
+- ✅ 2026-06-21 — View header & toolbar cleanup:
+  - Removed **"in Workspace"** subtitle from the view header.
+  - Added a **▾ dropdown** next to the view title with: **Save changes to view**, **Save as new view**, and **Detail layout**. Replaces the old "Update X" toolbar button.
+  - **Detail layout** is also accessible from the **···** menu on each view in the sidebar (navigates to the view and auto-opens the modal).
+  - Added **Card details** button (card view only) and **Calendar item details** button (calendar view only) in the toolbar. These control which fields appear on card faces / calendar event blocks respectively — separate from the per-record detail layout.
+  - Toolbar and header both fit on one line.
+
 - ✅ 2026-06-21 — Grid/column/bulk/calendar batch:
   - Fixed the half-hidden **insert-field (+) buttons** between column headers and
     moved the **field-options caret (▾)** to sit right next to the header text.

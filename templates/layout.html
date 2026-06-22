@@ -40,6 +40,8 @@
                         <button class="nav-more-btn" onclick="toggleSidebarMenu(event,'vm-{{ v.id }}')">···</button>
                         <div class="sidebar-menu hidden" id="vm-{{ v.id }}">
                             <div class="sidebar-menu-item" onclick="openRenameView({{ v.id }}, '{{ v.name | replace("'", "\\'") }}')">✎ Rename</div>
+                            <a href="/view/{{ v.id }}?open=detail_layout" class="sidebar-menu-item">🗂 Detail layout</a>
+                            <div class="sidebar-menu-divider"></div>
                             <form method="post" action="/api/views/{{ v.id }}/delete" onsubmit="return confirm('Delete this view? (Your records are not deleted.)')">
                                 <button type="submit" class="sidebar-menu-item sidebar-menu-danger">🗑 Delete view</button>
                             </form>

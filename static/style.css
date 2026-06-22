@@ -214,7 +214,7 @@ input, select, textarea { font-family: inherit; }
     z-index: 5;
 }
 
-.view-header-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.view-header-left { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
 .view-header-right { display: flex; align-items: center; gap: 8px; }
 
 .view-title {
@@ -242,6 +242,18 @@ input, select, textarea { font-family: inherit; }
 
 .view-options-wrap { position: relative; }
 
+.view-options-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 9px;
+    font-size: 13px;
+    color: var(--text-muted);
+    cursor: pointer;
+    line-height: 1.4;
+}
+.view-options-btn:hover { background: var(--green-hover); border-color: var(--green); color: var(--green); }
+
 .view-options-menu {
     position: absolute;
     top: calc(100% + 4px);
@@ -254,6 +266,21 @@ input, select, textarea { font-family: inherit; }
     min-width: 200px;
     padding: 4px 0;
 }
+.view-options-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 14px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    background: none;
+    border: none;
+    font-family: inherit;
+    white-space: nowrap;
+}
+.view-options-item:hover { background: var(--green-hover); color: var(--green); }
+.view-options-divider { border-top: 1px solid var(--border); margin: 4px 0; }
 .view-count { font-size: 12px; color: var(--text-faint); }
 
 .view-toggle { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }

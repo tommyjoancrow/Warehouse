@@ -14,7 +14,19 @@
 <div class="view-header">
     <div class="view-header-left">
         <h1 class="view-title">{{ table.icon }} {{ page_title }}</h1>
-        {% if view %}<span class="view-subtitle">in {{ table.name }}</span>{% endif %}
+        {% if view %}
+        <div class="view-options-wrap" id="view-options-wrap">
+            <button class="view-options-btn" onclick="toggleViewMenu(event)" title="View options">▾</button>
+            <div class="view-options-menu hidden" id="view-options-menu">
+                <div class="view-options-item" onclick="updateCurrentView()">💾 Save changes to view</div>
+                <div class="view-options-item" onclick="closeViewMenu(); openSaveView()">📋 Save as new view</div>
+                <div class="view-options-divider"></div>
+                <div class="view-options-item" onclick="closeViewMenu(); openDetailSettings()">🗂 Detail layout</div>
+            </div>
+        </div>
+        {% else %}
+        <button class="view-options-btn" onclick="openSaveView()" title="Save as view">💾 Save as view</button>
+        {% endif %}
     </div>
     <div class="view-header-right">
         <a href="/record/new?table_id={{ table.id }}{% if view %}&view_id={{ view.id }}{% endif %}" class="btn-primary">+ New record</a>
@@ -53,31 +65,27 @@
                 ↕⚙ Sort &amp; filter{% if active_count>0 %} <span class="at-badge">{{ active_count }}</span>{% endif %}
             </button>
 
-            {% if view %}
-            <button type="button" class="at-btn" onclick="openDetailSettings()">🗂 Detail layout</button>
+            {% if view_type == 'card' and view %}
+            <button type=”button” class=”at-btn” onclick=”openCardDetails()”>🃏 Card details</button>
+            {% elif view_type == 'calendar' and view %}
+            <button type=”button” class=”at-btn” onclick=”openCalDetails()”>📅 Calendar item details</button>
             {% endif %}
 
             {% if archived_count %}
-            <a href="?{% if view_type!='grid' %}vt={{ view_type }}&{% endif %}archived={{ '0' if show_archived else '1' }}"
-               class="at-btn {% if show_archived %}at-btn-active{% endif %}">
+            <a href=”?{% if view_type!='grid' %}vt={{ view_type }}&{% endif %}archived={{ '0' if show_archived else '1' }}”
+               class=”at-btn {% if show_archived %}at-btn-active{% endif %}”>
                 {% if show_archived %}Hide archived{% else %}Show archived ({{ archived_count }}){% endif %}
             </a>
             {% endif %}
 
             {% if view_type == 'calendar' and date_columns %}
-            <span class="cal-anchor-wrap">📅 Anchor on
-                <select class="form-input-sm" onchange="setDateCol(this.value)">
+            <span class=”cal-anchor-wrap”>📅 Anchor:
+                <select class=”form-input-sm” onchange=”setDateCol(this.value)”>
                     {% for dc in date_columns %}
-                    <option value="{{ dc.id }}" {% if dc.id == date_col_id %}selected{% endif %}>{{ dc.name }}</option>
+                    <option value=”{{ dc.id }}” {% if dc.id == date_col_id %}selected{% endif %}>{{ dc.name }}</option>
                     {% endfor %}
                 </select>
             </span>
-            {% endif %}
-
-            {% if not view %}
-            <button type="button" class="at-btn" onclick="openSaveView()">💾 Save as view</button>
-            {% else %}
-            <button type="button" class="at-btn" onclick="updateCurrentView()">💾 Update “{{ view.name }}”</button>
             {% endif %}
         </div>
 
@@ -194,15 +202,19 @@
 
 {# ── CARD VIEW ─────────────────────────────────────────────── #}
 {% elif view_type == 'card' %}
+{% set card_cols = visible_columns | rejectattr('id', 'equalto', primary.id if primary else 0) | list %}
+{% if card_field_ids %}
+  {% set card_cols = card_cols | selectattr('id', 'in', card_field_ids) | list %}
+{% endif %}
 <div class="card-grid">
     {% for rec in records %}
     <a href="/record/{{ rec.id }}{{ rec_suffix }}" class="card">
         <div class="card-top">
             <div class="card-title">{{ rec.display[primary.id] if primary else ('Record ' ~ rec.id) }}</div>
         </div>
+        {% if card_cols %}
         <div class="card-fields">
-            {% for c in visible_columns %}
-                {% if not loop.first %}
+            {% for c in card_cols %}
                 {% set d = rec.display[c.id] %}
                 {% if d %}
                 <div class="card-field">
@@ -215,9 +227,9 @@
                     </span>
                 </div>
                 {% endif %}
-                {% endif %}
             {% endfor %}
         </div>
+        {% endif %}
     </a>
     {% endfor %}
     {% if not records %}<div class="empty-state-inline">No records.</div>{% endif %}
@@ -249,7 +261,7 @@
                     </div>
                     {% for r in day.records %}
                     <a href="/record/{{ r.id }}{{ rec_suffix }}" class="cal-event" draggable="true"
-                       data-record="{{ r.id }}" ondragstart="calDragStart(event)">{{ r.label }}</a>
+                       data-record="{{ r.id }}" ondragstart="calDragStart(event)">{{ r.label }}{% if r.extras %} · {{ r.extras | join(' · ') }}{% endif %}</a>
                     {% endfor %}
                 </div>
                 {% endfor %}
@@ -353,6 +365,28 @@
 </div>
 {% endif %}
 
+{% if view %}
+<!-- CARD DETAILS MODAL -->
+<div class="modal hidden" id="modal-card-details">
+    <div class="modal-header"><h3>Card details — "{{ view.name }}"</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
+    <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px">
+        Choose which fields appear on each card. The title is always shown.
+    </p>
+    <div id="card-fields-list" class="detail-fields-list"></div>
+    <button type="button" class="btn-primary" onclick="saveCardFields()">Save</button>
+</div>
+
+<!-- CALENDAR ITEM DETAILS MODAL -->
+<div class="modal hidden" id="modal-cal-details">
+    <div class="modal-header"><h3>Calendar item details — "{{ view.name }}"</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
+    <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px">
+        Choose extra fields to show on each calendar event block.
+    </p>
+    <div id="cal-fields-list" class="detail-fields-list"></div>
+    <button type="button" class="btn-primary" onclick="saveCalFields()">Save</button>
+</div>
+{% endif %}
+
 <!-- SAVE VIEW MODAL -->
 <div class="modal hidden" id="modal-save-view">
     <div class="modal-header"><h3>Save as View</h3><button class="modal-close" onclick="closeModals()">✕</button></div>
@@ -382,6 +416,8 @@ var OPS_BY_TYPE = {{ ops_by_type | tojson }};
 var currentSorts = {{ sorts | tojson }};
 var currentFilters = {{ filters | tojson }};
 var DETAIL_FIELDS = {{ detail_field_ids | tojson if detail_field_ids is defined else '[]' }};
+var CARD_FIELDS = {{ card_field_ids | tojson if card_field_ids is defined else '[]' }};
+var CAL_FIELDS = {{ cal_field_ids | tojson if cal_field_ids is defined else '[]' }};
 var DATE_COL_ID = {{ date_col_id if date_col_id else 'null' }};
 
 // ── Calendar drag-to-reschedule ───────────────────────────────
@@ -434,6 +470,59 @@ function saveDetailFields(){
         .filter(function(cb){ return cb.checked; }).map(function(cb){ return parseInt(cb.value); });
     fetch('/api/views/'+VIEW_ID+'/detail-fields', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({fields: ids})}).then(function(){ closeModals(); });
+}
+
+// ── View-options dropdown (title area) ───────────────────────
+function toggleViewMenu(e){
+    e.stopPropagation();
+    var m = document.getElementById('view-options-menu');
+    if (m) m.classList.toggle('hidden');
+}
+function closeViewMenu(){
+    var m = document.getElementById('view-options-menu');
+    if (m) m.classList.add('hidden');
+}
+document.addEventListener('click', function(){ closeViewMenu(); });
+
+// ── Card details ──────────────────────────────────────────────
+function openCardDetails(){
+    var box = document.getElementById('card-fields-list');
+    var primaryId = COLUMNS.length ? COLUMNS[0].id : null;
+    var chosen = CARD_FIELDS.length ? CARD_FIELDS : COLUMNS.filter(function(c){ return c.id !== primaryId; }).map(function(c){ return c.id; });
+    box.innerHTML = COLUMNS.filter(function(c){ return c.id !== primaryId; }).map(function(c){
+        var on = chosen.indexOf(c.id) !== -1;
+        return '<label class="detail-field-row"><input type="checkbox" class="card-field-cb" value="'+c.id+'" '+(on?'checked':'')+'>'+escapeHtml(c.name)+'</label>';
+    }).join('');
+    openModal('modal-card-details');
+}
+function saveCardFields(){
+    var ids = Array.from(document.querySelectorAll('.card-field-cb'))
+        .filter(function(cb){ return cb.checked; }).map(function(cb){ return parseInt(cb.value); });
+    fetch('/api/views/'+VIEW_ID+'/card-fields', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({fields: ids})}).then(function(){ window.location.reload(); });
+}
+
+// ── Calendar item details ─────────────────────────────────────
+function openCalDetails(){
+    var box = document.getElementById('cal-fields-list');
+    var primaryId = COLUMNS.length ? COLUMNS[0].id : null;
+    var chosen = CAL_FIELDS;
+    box.innerHTML = COLUMNS.filter(function(c){ return c.id !== primaryId; }).map(function(c){
+        var on = chosen.indexOf(c.id) !== -1;
+        return '<label class="detail-field-row"><input type="checkbox" class="cal-field-cb" value="'+c.id+'" '+(on?'checked':'')+'>'+escapeHtml(c.name)+'</label>';
+    }).join('');
+    openModal('modal-cal-details');
+}
+function saveCalFields(){
+    var ids = Array.from(document.querySelectorAll('.cal-field-cb'))
+        .filter(function(cb){ return cb.checked; }).map(function(cb){ return parseInt(cb.value); });
+    fetch('/api/views/'+VIEW_ID+'/cal-fields', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({fields: ids})}).then(function(){ window.location.reload(); });
+}
+
+// ── Auto-open detail layout from sidebar link ─────────────────
+if (new URLSearchParams(window.location.search).get('open') === 'detail_layout') {
+    setTimeout(openDetailSettings, 100);
 }
 
 // ── Panels ───────────────────────────────────────────────────

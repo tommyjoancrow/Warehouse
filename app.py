@@ -119,6 +119,10 @@ def init_db():
         conn.execute("ALTER TABLE views ADD COLUMN column_order_json TEXT DEFAULT '[]'")
     if 'detail_fields_json' not in view_cols:
         conn.execute("ALTER TABLE views ADD COLUMN detail_fields_json TEXT DEFAULT '[]'")
+    if 'card_fields_json' not in view_cols:
+        conn.execute("ALTER TABLE views ADD COLUMN card_fields_json TEXT DEFAULT '[]'")
+    if 'cal_fields_json' not in view_cols:
+        conn.execute("ALTER TABLE views ADD COLUMN cal_fields_json TEXT DEFAULT '[]'")
     rec_cols = [r[1] for r in conn.execute("PRAGMA table_info(records)").fetchall()]
     if 'archived' not in rec_cols:
         conn.execute("ALTER TABLE records ADD COLUMN archived INTEGER DEFAULT 0")
@@ -502,6 +506,18 @@ def _render_table(conn, table, view):
             detail_field_ids = json.loads(view['detail_fields_json'])
         except Exception:
             detail_field_ids = []
+    card_field_ids = []
+    if view and view.get('card_fields_json'):
+        try:
+            card_field_ids = json.loads(view['card_fields_json'])
+        except Exception:
+            card_field_ids = []
+    cal_field_ids = []
+    if view and view.get('cal_fields_json'):
+        try:
+            cal_field_ids = json.loads(view['cal_fields_json'])
+        except Exception:
+            cal_field_ids = []
     date_columns = [c for c in columns if c['type'] == 'date']
     # calendar date column + month grid
     date_col_id = None
@@ -517,7 +533,7 @@ def _render_table(conn, table, view):
         else:
             date_col_id = date_columns[0]['id'] if date_columns else None
         if date_col_id:
-            cal_weeks, cal_month_label, cal_prev, cal_next = build_calendar(recs, date_col_id, primary)
+            cal_weeks, cal_month_label, cal_prev, cal_next = build_calendar(recs, date_col_id, primary, columns, cal_field_ids)
     return render_template('table_view.html',
         table=table, columns=columns, visible_columns=visible_columns,
         records=recs, link_names=link_names, primary=primary,
@@ -525,12 +541,13 @@ def _render_table(conn, table, view):
         filters=filters, filter_logic=logic, sorts=sorts, hidden=list(hidden_set),
         search=search, date_col_id=date_col_id, date_columns=date_columns,
         detail_field_ids=detail_field_ids,
+        card_field_ids=card_field_ids, cal_field_ids=cal_field_ids,
         show_archived=show_archived, archived_count=archived_count,
         cal_weeks=cal_weeks, cal_month_label=cal_month_label, cal_prev=cal_prev, cal_next=cal_next,
         page_title=(view['name'] if view else table['name']),
         active_table_id=table['id'], active_view_id=(view['id'] if view else None))
 
-def build_calendar(recs, date_col_id, primary):
+def build_calendar(recs, date_col_id, primary, all_columns=None, cal_field_ids=None):
     """Return (weeks, month_label, prev_ym, next_ym) for the requested month."""
     ym = request.args.get('m')  # 'YYYY-MM'
     today = date.today()
@@ -541,13 +558,26 @@ def build_calendar(recs, date_col_id, primary):
             year, month = today.year, today.month
     else:
         year, month = today.year, today.month
+    # build extra-field lookup: col_id -> name (for display in event block)
+    extra_cols = []
+    if cal_field_ids and all_columns:
+        id2col = {c['id']: c for c in all_columns}
+        primary_id = primary['id'] if primary else None
+        for cid in cal_field_ids:
+            if cid != primary_id and cid in id2col:
+                extra_cols.append(id2col[cid])
     # bucket records by date string
     by_date = {}
     for r in recs:
         dv = (r['cells'].get(date_col_id, '') or '')[:10]
         if dv:
             label = (r['cells'].get(primary['id'], '') if primary else '') or f"Record {r['id']}"
-            by_date.setdefault(dv, []).append({'id': r['id'], 'label': label})
+            extras = []
+            for ec in extra_cols:
+                val = r['display'].get(ec['id'], '')
+                if val and val != '—':
+                    extras.append(str(val) if not isinstance(val, list) else ', '.join(val))
+            by_date.setdefault(dv, []).append({'id': r['id'], 'label': label, 'extras': extras})
     cal = cal_module.Calendar(firstweekday=6)  # Sunday first
     weeks = []
     for week in cal.monthdatescalendar(year, month):
@@ -1018,6 +1048,26 @@ def view_detail_fields(view_id):
     data = request.get_json() or {}
     conn = get_db()
     conn.execute("UPDATE views SET detail_fields_json=? WHERE id=?",
+                 (json.dumps(data.get('fields', [])), view_id))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/views/<int:view_id>/card-fields", methods=["POST"])
+def view_card_fields(view_id):
+    data = request.get_json() or {}
+    conn = get_db()
+    conn.execute("UPDATE views SET card_fields_json=? WHERE id=?",
+                 (json.dumps(data.get('fields', [])), view_id))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/views/<int:view_id>/cal-fields", methods=["POST"])
+def view_cal_fields(view_id):
+    data = request.get_json() or {}
+    conn = get_db()
+    conn.execute("UPDATE views SET cal_fields_json=? WHERE id=?",
                  (json.dumps(data.get('fields', [])), view_id))
     conn.commit()
     conn.close()

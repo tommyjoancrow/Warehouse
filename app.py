@@ -1232,7 +1232,7 @@ def record_detail(record_id):
                            record=dict(rec), cells=cells, link_display=link_display, view_id=view_id,
                            back_view=back_view, detail_mode=detail_mode, detail_collapsed=detail_collapsed,
                            backlinks=backlinks, ops_by_type=OPS_BY_TYPE, active_table_id=rec['table_id'],
-                           page_title='Record')
+                           page_title=rec['name'] or 'Record')
 
 def _save_cells(conn, record_id, columns, form, only_ids=None):
     for c in columns:

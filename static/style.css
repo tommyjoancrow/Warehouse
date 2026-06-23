@@ -155,6 +155,7 @@ input, select, textarea { font-family: inherit; }
 
 .nav-icon { font-size: 14px; flex-shrink: 0; }
 .nav-label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.nav-home-badge { font-size: 11px; color: var(--text-faint); flex-shrink: 0; margin-left: 2px; }
 .nav-count { font-size: 11px; color: var(--text-faint); flex-shrink: 0; }
 
 .nav-children { margin-left: 0; }

@@ -194,6 +194,10 @@ def _search_view_id(conn):
     row = conn.execute("SELECT value FROM app_meta WHERE key='search_view_id'").fetchone()
     return int(row['value']) if row else None
 
+def _home_view_id(conn):
+    row = conn.execute("SELECT value FROM app_meta WHERE key='home_view_id'").fetchone()
+    return int(row['value']) if row else None
+
 def _auto_date_cols(conn, table_id):
     """Return {'created': col_id, 'modified': col_id} for auto-managed date columns."""
     out = {}
@@ -822,21 +826,28 @@ def inject_sidebar():
     sv = _search_view_id(conn)
     if sv:
         views = [v for v in views if v['id'] != sv]  # hide the internal Search view
+    hv = _home_view_id(conn)
     conn.close()
     sidebar_views = _build_view_tree_flat(views)
     return dict(workspace=(dict(ws) if ws else None), sidebar_views=sidebar_views,
                 workspace_total=total, all_tables=([dict(ws)] if ws else []),
-                column_types=COLUMN_TYPES, ops_by_type=OPS_BY_TYPE)
+                column_types=COLUMN_TYPES, ops_by_type=OPS_BY_TYPE,
+                home_view_id=hv)
 
 # ── Routes: browsing ────────────────────────────────────────────
 @app.route("/")
 def index():
     conn = get_db()
     ws = workspace_table(conn)
+    hv = _home_view_id(conn)
+    conn.close()
+    if hv:
+        return redirect(url_for('view_page', view_id=hv))
+    conn2 = get_db()
     first_view = None
     if ws:
-        first_view = conn.execute("SELECT id FROM views WHERE table_id=? ORDER BY position, id LIMIT 1", (ws['id'],)).fetchone()
-    conn.close()
+        first_view = conn2.execute("SELECT id FROM views WHERE table_id=? ORDER BY position, id LIMIT 1", (ws['id'],)).fetchone()
+    conn2.close()
     if first_view:
         return redirect(url_for('view_page', view_id=first_view['id']))
     if ws:
@@ -1777,6 +1788,17 @@ def rename_view(view_id):
     conn.commit()
     conn.close()
     return redirect(request.referrer or url_for('view_page', view_id=view_id))
+
+@app.route("/api/views/<int:view_id>/set-home", methods=["POST"])
+def set_home_view(view_id):
+    conn = get_db()
+    if view_id == 0:
+        conn.execute("DELETE FROM app_meta WHERE key='home_view_id'")
+    else:
+        conn.execute("INSERT OR REPLACE INTO app_meta (key,value) VALUES ('home_view_id',?)", (str(view_id),))
+    conn.commit()
+    conn.close()
+    return ('', 204)
 
 @app.route("/api/views/<int:view_id>/delete", methods=["POST"])
 def delete_view(view_id):

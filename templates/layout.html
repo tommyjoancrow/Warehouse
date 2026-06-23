@@ -47,12 +47,19 @@
                            class="nav-item nav-saved-view {% if active_view_id is defined and active_view_id == v.id %}active{% endif %}">
                             <span class="nav-icon">{% if v.icon %}{{ v.icon }}{% elif v.view_type == 'calendar' %}📅{% elif v.view_type == 'card' %}🃏{% else %}▦{% endif %}</span>
                             <span class="nav-label">{{ v.name }}</span>
+                            {% if home_view_id == v.id %}<span class="nav-home-badge" title="Home view">⌂</span>{% endif %}
                         </a>
                         <div class="nav-more-wrap">
                             <button class="nav-more-btn" onclick="toggleSidebarMenu(event,'vm-{{ v.id }}')">···</button>
                             <div class="sidebar-menu hidden" id="vm-{{ v.id }}">
                                 <div class="sidebar-menu-item" onclick="openRenameView({{ v.id }}, '{{ v.name | replace("'", "\\'") }}', '{{ v.icon }}')">✎ Rename</div>
                                 <a href="/view/{{ v.id }}?open=detail_layout" class="sidebar-menu-item">🗂 Detail layout</a>
+                                <div class="sidebar-menu-divider"></div>
+                                {% if home_view_id == v.id %}
+                                <div class="sidebar-menu-item" onclick="setHomeView(0)">⌂ Remove home</div>
+                                {% else %}
+                                <div class="sidebar-menu-item" onclick="setHomeView({{ v.id }})">⌂ Set as home</div>
+                                {% endif %}
                                 <div class="sidebar-menu-divider"></div>
                                 <form method="post" action="/api/views/{{ v.id }}/delete" onsubmit="return confirm('Delete this view? (Your records are not deleted.)')">
                                     <button type="submit" class="sidebar-menu-item sidebar-menu-danger">🗑 Delete view</button>
@@ -270,6 +277,11 @@ function createView() {
         .then(function(d){ if(d.ok) window.location = '/view/' + d.id; });
 }
 {% endif %}
+
+function setHomeView(viewId) {
+    fetch('/api/views/' + viewId + '/set-home', {method:'POST'})
+        .then(function(){ window.location.reload(); });
+}
 
 // ── Sidebar view drag-to-reorder / nest ──────────────────────
 var _dragVid = null, _dropMode = null;

@@ -846,6 +846,19 @@ input, select, textarea { font-family: inherit; }
 
 .btn-back:hover { background: var(--green-hover); color: var(--green); }
 
+.btn-back-arrow {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    font-size: 18px;
+    color: var(--text-muted);
+    text-decoration: none;
+    border-radius: 6px;
+}
+.btn-back-arrow:hover { background: var(--green-hover); color: var(--green); }
+
 .editor-title-wrap {
     grid-column: 1 / 2;
     padding: 20px 28px 8px;

@@ -24,10 +24,6 @@ _(add ideas here as they come up)_
 These are things I know are incomplete or rough after the big rewrite to the
 tables/columns/records/views model.
 
-- 🔴 **Link filter UX is raw.** The "links to" filter expects you to type a record
-  *id* into the value box instead of picking a record by name.
-- 🔴 **No way to reorder views in the sidebar.** Position is stored but
-  there's no UI to change it.
 - 🔴 **Inline edit reloads the whole page** after every cell save. Works, but
   feels heavy — could update just the cell in place.
 - 🔴 **Single vs. multi-link not enforced.** A "link to record" column always
@@ -40,6 +36,25 @@ tables/columns/records/views model.
 ---
 
 ## ✅ Done
+
+- ✅ 2026-06-22 — Big feature batch:
+  - **Backlinks field** (reverse links) with a **full filter + sort builder**
+    (multiple conditions, AND/OR, sorting — same engine as a main view).
+  - **Created / Modified** auto date fields (auto-populate, auto-bump on edit,
+    still manually editable).
+  - **Templates + Settings page**; insert a template in any rich-text field with
+    **Ctrl+/**, add clickable checklists with **Ctrl+Shift+C**.
+  - **Archive view** (sidebar) with unarchive; **Trash** unchanged.
+  - **Calendar week/month toggle** + **Today** button.
+  - **Relative date filters** (within N days, next/last N days, overdue, today).
+  - **Card body-text** length options (1 line / 3 lines / full).
+  - **Filter link fields by name** (record picker, not a raw id) — *was: "Link
+    filter UX is raw".*
+  - **Sidebar view drag-to-reorder/nest** — *was: "No way to reorder views".*
+  - Type-aware filter values + sort-direction labels; **Date modified/created**
+    sort options; drag-to-reorder sorts; clickable linked records; view emojis;
+    card multi-select + bulk edit; lighter bulk bar; relative-date ops.
+  - **Fixed smart-quote corruption** that was silently breaking HTML attributes.
 
 - ✅ 2026-06-21 — Bug fixes + filter group redesign:
   - **Plus sign clipping**: hovering a column header now raises its z-index above siblings, so the `+` insert button is fully visible and not half-covered by the next column.

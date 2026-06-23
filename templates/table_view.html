@@ -699,6 +699,10 @@ function sortDirLabels(colId){
     if (t === 'checkbox') return ['Unchecked first', 'Checked first'];
     if (t === 'number' || t === 'currency' || t === 'percent') return ['Low → High', 'High → Low'];
     if (t === 'date') return ['Oldest first', 'Newest first'];
+    if (t === 'select') {
+        var opts = []; try { opts = JSON.parse(c.options || '[]'); } catch(e){}
+        if (opts.length >= 2) return [opts[0] + ' → ' + opts[opts.length-1], opts[opts.length-1] + ' → ' + opts[0]];
+    }
     return ['A → Z', 'Z → A'];
 }
 function colSelect(selected, onchange, includeMeta) {

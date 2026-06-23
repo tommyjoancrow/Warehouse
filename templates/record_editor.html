@@ -8,11 +8,9 @@
 <div class="editor-shell" data-mode="{{ detail_mode or 'crm' }}" id="editor-shell">
     <div class="editor-header">
         <div class="editor-header-left">
-            {% if back_view is defined and back_view %}
-            <a href="/view/{{ back_view.id }}" class="btn-back">← {{ back_view.name }}</a>
-            {% else %}
-            <a href="/table/{{ table.id }}" class="btn-back">← {{ table.name }}</a>
-            {% endif %}
+            {% set back_href = ('/view/' ~ back_view.id) if (back_view is defined and back_view) else ('/table/' ~ table.id) %}
+            {% set back_name = back_view.name if (back_view is defined and back_view) else table.name %}
+            <a href="{{ back_href }}" class="btn-back-arrow" title="Back to {{ back_name }}">←</a>
             <div class="mode-toggle">
                 <button type="button" class="mode-btn {% if (detail_mode or 'crm') == 'crm' %}active{% endif %}" onclick="switchEditorMode('crm')">☰ CRM</button>
                 <button type="button" class="mode-btn {% if (detail_mode or 'crm') == 'writing' %}active{% endif %}" onclick="switchEditorMode('writing')">✍ Write</button>
@@ -28,9 +26,9 @@
             <form method="post" action="/record/{{ record.id }}/delete" style="display:inline" onsubmit="return confirm('Move this record to trash?')">
                 <button type="submit" class="icon-action-btn" title="Trash">🗑</button>
             </form>
+            {% else %}
+            <button type="submit" form="record-form" class="btn-primary">Save</button>
             {% endif %}
-            <a href="{% if view_id %}/view/{{ view_id }}{% else %}/table/{{ table.id }}{% endif %}" class="btn-close-nosave">Close without saving</a>
-            <button type="submit" form="record-form" class="btn-primary">Save and close</button>
         </div>
     </div>
 
@@ -315,11 +313,13 @@ function addLink(colId, id, label){
     document.getElementById('link-results-'+colId).classList.add('hidden');
     var picker = document.querySelector('.link-picker[data-col="'+colId+'"]');
     picker.querySelector('.link-search').value = '';
+    scheduleAutosave();
 }
 function removeLink(colId, id){
     var chips = document.getElementById('link-chips-'+colId);
     var chip = chips.querySelector('.chip-link[data-id="'+id+'"]');
     if (chip) chip.remove();
+    scheduleAutosave();
 }
 
 // ── Tag field ─────────────────────────────────────────────────
@@ -333,8 +333,9 @@ function addTag(colId, val){
     span.className = 'chip'; span.dataset.val = val;
     span.innerHTML = escapeHtml(val)+' <button type="button" class="chip-x" onclick="removeTag('+colId+', this)">✕</button><input type="hidden" name="col_'+colId+'" value="'+escapeHtml(val)+'">';
     chips.appendChild(span);
+    scheduleAutosave();
 }
-function removeTag(colId, btn){ btn.closest('.chip').remove(); }
+function removeTag(colId, btn){ btn.closest('.chip').remove(); scheduleAutosave(); }
 function tagKey(e, colId, input){
     if (e.key===',' || e.key==='Enter'){
         e.preventDefault();
@@ -415,25 +416,53 @@ function setupNoteLink(quill){
 }
 
 // ── Autosave ──────────────────────────────────────────────────
-{% if record %}
-var status = document.getElementById('autosave-status');
+// Collect every field's value (matches the server's _save_cells logic).
 function gatherCells(){
     var cells = {};
-    document.querySelectorAll('#record-form [name^="col_"]').forEach(function(el){
-        var cid = el.name.replace('col_','');
-        if (el.type==='checkbox' && el.closest('.ms-chip')===null){ cells[cid] = el.checked?'1':'0'; }
+    document.querySelectorAll('.rec-field').forEach(function(f){
+        var cid = f.dataset.colId, t = f.dataset.type;
+        if (!cid || t === 'longtext' || t === 'backlinks') return;
+        if (t === 'checkbox'){
+            var cb = f.querySelector('input[type=checkbox]');
+            cells[cid] = (cb && cb.checked) ? '1' : '0';
+        } else if (t === 'multiselect'){
+            var vals = Array.from(f.querySelectorAll('input[type=checkbox]:checked')).map(function(x){ return x.value; });
+            cells[cid] = JSON.stringify(vals);
+        } else if (t === 'tag'){
+            var vals = Array.from(f.querySelectorAll('.tag-chips input[type=hidden]')).map(function(x){ return x.value; });
+            cells[cid] = JSON.stringify(vals);
+        } else if (t === 'link'){
+            var vals = Array.from(f.querySelectorAll('.link-chips input[type=hidden]')).map(function(x){ return parseInt(x.value); });
+            cells[cid] = JSON.stringify(vals);
+        } else {
+            var inp = f.querySelector('input,select,textarea');
+            if (inp) cells[cid] = inp.value;
+        }
     });
     richEditors.forEach(function(re){ cells[re.col] = re.quill.root.innerHTML; });
     var pi = document.getElementById('primary-input'); if(pi){ cells[pi.name.replace('col_','')] = pi.value; }
     return cells;
 }
+{% if record %}
+var status = document.getElementById('autosave-status');
+var _saveTimer = null;
 function autosave(){
-    status.textContent='Saving…'; status.className='autosave-status saving';
+    if (status){ status.textContent='Saving…'; status.className='autosave-status saving'; }
     fetch('/record/{{ record.id }}/autosave', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({cells: gatherCells()})})
-        .then(function(r){return r.json();}).then(function(d){ status.textContent=d.ok?'Saved':'Error'; status.className='autosave-status '+(d.ok?'saved':'error'); })
-        .catch(function(){ status.textContent='Error'; status.className='autosave-status error'; });
+        .then(function(r){return r.json();}).then(function(d){ if(status){ status.textContent=d.ok?'Saved':'Error'; status.className='autosave-status '+(d.ok?'saved':'error'); } })
+        .catch(function(){ if(status){ status.textContent='Error'; status.className='autosave-status error'; } });
 }
-setInterval(autosave, 30000);
+function scheduleAutosave(){ clearTimeout(_saveTimer); _saveTimer = setTimeout(autosave, 700); }
+var _recForm = document.getElementById('record-form');
+_recForm.addEventListener('input', scheduleAutosave);
+_recForm.addEventListener('change', scheduleAutosave);
+richEditors.forEach(function(re){ re.quill.on('text-change', function(d,o,src){ if(src==='user') scheduleAutosave(); }); });
+window.addEventListener('beforeunload', function(){
+    // best-effort flush of pending edits when leaving
+    try { navigator.sendBeacon('/record/{{ record.id }}/autosave', new Blob([JSON.stringify({cells: gatherCells()})], {type:'application/json'})); } catch(e){}
+});
+{% else %}
+function scheduleAutosave(){}  // new record: no autosave — use the Save button
 {% endif %}
 
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }

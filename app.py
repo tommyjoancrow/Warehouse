@@ -165,7 +165,34 @@ def init_db():
         for i, (nm, body) in enumerate(defaults):
             conn.execute("INSERT INTO templates (name,body,position,created_at) VALUES (?,?,?,?)", (nm, body, i, now))
         conn.commit()
+    _ensure_search_view(conn)
     conn.close()
+
+def _ensure_search_view(conn):
+    """A hidden, configurable 'Search' view used to render search results as a
+    normal grid/card view. Returns its id (creating it once if missing)."""
+    conn.execute("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT)")
+    row = conn.execute("SELECT value FROM app_meta WHERE key='search_view_id'").fetchone()
+    if row:
+        v = conn.execute("SELECT id FROM views WHERE id=?", (int(row['value']),)).fetchone()
+        if v:
+            return int(row['value'])
+    ws = conn.execute("SELECT id FROM tables ORDER BY id LIMIT 1").fetchone()
+    if not ws:
+        return None
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    pin = conn.execute("SELECT id FROM columns WHERE table_id=? AND name='Pin' LIMIT 1", (ws['id'],)).fetchone()
+    sorts = ([{'c': pin['id'], 'd': 'desc'}] if pin else []) + [{'c': '_updated_at', 'd': 'desc'}]
+    vid = conn.execute("""INSERT INTO views (table_id,name,view_type,filters_json,filter_logic,sorts_json,hidden_columns_json,position,created_at)
+                          VALUES (?,?,?,?,?,?,?,?,?)""",
+                       (ws['id'], 'Search', 'grid', '[]', 'AND', json.dumps(sorts), '[]', 99999, now)).lastrowid
+    conn.execute("INSERT OR REPLACE INTO app_meta (key,value) VALUES ('search_view_id',?)", (str(vid),))
+    conn.commit()
+    return vid
+
+def _search_view_id(conn):
+    row = conn.execute("SELECT value FROM app_meta WHERE key='search_view_id'").fetchone()
+    return int(row['value']) if row else None
 
 def _auto_date_cols(conn, table_id):
     """Return {'created': col_id, 'modified': col_id} for auto-managed date columns."""
@@ -532,7 +559,7 @@ def cell_match(col_type, raw, op, fval):
         if op == 'links_to': return str(fval) in ids
     return True
 
-def cell_sort_key(col_type, raw):
+def cell_sort_key(col_type, raw, options=None):
     raw = raw or ''
     if col_type in ('number','currency','percent'):
         try:
@@ -543,6 +570,15 @@ def cell_sort_key(col_type, raw):
         return (0, 1 if raw in ('1','true','True') else 0)
     if col_type == 'date':
         return (1 if not raw else 0, raw)
+    if col_type == 'select':
+        # Sort by the order options were defined (e.g. Low < Medium < High),
+        # not alphabetically. Unknown values, then empties, sort last.
+        opts = options or []
+        if raw and raw in opts:
+            return (0, opts.index(raw), '')
+        if raw:
+            return (1, 0, raw.lower())
+        return (2, 0, '')
     return (1 if not raw else 0, raw.lower())
 
 def apply_view(recs, columns, filters, filter_logic, sorts, search):
@@ -603,7 +639,13 @@ def apply_view(recs, columns, filters, filter_logic, sorts, search):
         col = col_by_id.get(int(cref)) if cref else None
         if not col:
             continue
-        recs.sort(key=lambda r, c=col: cell_sort_key(c['type'], r['cells'].get(c['id'], '')),
+        col_opts = None
+        if col['type'] == 'select':
+            try:
+                col_opts = json.loads(col['options'] or '[]')
+            except Exception:
+                col_opts = []
+        recs.sort(key=lambda r, c=col, o=col_opts: cell_sort_key(c['type'], r['cells'].get(c['id'], ''), o),
                   reverse=rev)
     return recs
 
@@ -777,6 +819,9 @@ def inject_sidebar():
         views = [dict(v) for v in conn.execute(
             "SELECT * FROM views WHERE table_id=? ORDER BY position, id", (ws['id'],)).fetchall()]
         total = conn.execute("SELECT COUNT(*) FROM records WHERE table_id=? AND deleted_at IS NULL", (ws['id'],)).fetchone()[0]
+    sv = _search_view_id(conn)
+    if sv:
+        views = [v for v in views if v['id'] != sv]  # hide the internal Search view
     conn.close()
     sidebar_views = _build_view_tree_flat(views)
     return dict(workspace=(dict(ws) if ws else None), sidebar_views=sidebar_views,
@@ -1852,13 +1897,17 @@ def archive_page():
     items = []
     for r in rows:
         pcol = conn.execute("SELECT id FROM columns WHERE table_id=? ORDER BY position, id LIMIT 1", (r['table_id'],)).fetchone()
+        tcol = conn.execute("SELECT id FROM columns WHERE table_id=? AND name='Type' LIMIT 1", (r['table_id'],)).fetchone()
         label = ''
         if pcol:
             cv = conn.execute("SELECT value FROM cell_values WHERE record_id=? AND column_id=?", (r['id'], pcol['id'])).fetchone()
             label = cv['value'] if cv else ''
+        rtype = ''
+        if tcol:
+            tv = conn.execute("SELECT value FROM cell_values WHERE record_id=? AND column_id=?", (r['id'], tcol['id'])).fetchone()
+            rtype = tv['value'] if tv else ''
         items.append({'id': r['id'], 'label': label or f"Record {r['id']}",
-                      'table_name': r['table_name'], 'table_icon': r['table_icon'],
-                      'updated_at': r['updated_at']})
+                      'rtype': rtype, 'updated_at': r['updated_at']})
     conn.close()
     return render_template('archive.html', items=items, active_page='archive')
 
@@ -1873,24 +1922,15 @@ def unarchive_record(record_id):
 # ── Search ──────────────────────────────────────────────────────
 @app.route("/search")
 def search_page():
+    """Render search results through the normal view machinery (grid/card) using a
+    persistent, user-configurable 'Search' view."""
     q = request.args.get('q', '').strip()
     conn = get_db()
-    results = []
-    if q:
-        s = q.lower()
-        for t in conn.execute("SELECT * FROM tables ORDER BY position, id").fetchall():
-            columns = get_columns(conn, t['id'])
-            recs = load_records(conn, t['id'])
-            recs = apply_view(recs, columns, [], 'AND', [], q)
-            recs = [r for r in recs if not r['archived']]  # archived excluded from search
-            if recs:
-                recs, _ = build_grid(conn, recs, columns)
-                pcol = primary_column(columns)
-                for r in recs[:25]:
-                    label = (r['cells'].get(pcol['id'], '') if pcol else '') or f"Record {r['id']}"
-                    results.append({'id': r['id'], 'label': label, 'table_name': t['name'], 'table_icon': t['icon']})
+    sv = _ensure_search_view(conn)
     conn.close()
-    return render_template('search_results.html', query=q, results=results)
+    if sv:
+        return redirect(url_for('view_page', view_id=sv, search=q))
+    return redirect(url_for('index'))
 
 
 if __name__ == "__main__":

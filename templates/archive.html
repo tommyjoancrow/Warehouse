@@ -17,7 +17,7 @@
             {% for it in items %}
             <tr>
                 <td><a href="/record/{{ it.id }}" class="chip-link-label">{{ it.label }}</a></td>
-                <td>{{ it.table_icon }} {{ it.table_name }}</td>
+                <td>{% if it.rtype %}<span class="chip chip-select">{{ it.rtype }}</span>{% else %}<span class="rec-hint">—</span>{% endif %}</td>
                 <td>{{ it.updated_at }}</td>
                 <td class="td-actions">
                     <a href="/record/{{ it.id }}" class="btn-card-edit">Open</a>

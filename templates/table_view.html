@@ -223,6 +223,7 @@
                             {% elif c.type == 'link' %}{% for v in d %}<span class="chip chip-link">↗ {{ v.name }}</span>{% endfor %}
                             {% elif c.type == 'backlinks' %}{% for v in d %}<span class="chip">↩ {{ v.name }}</span>{% endfor %}
                             {% elif c.type == 'select' and d %}<span class="chip chip-select">{{ d }}</span>
+                            {% elif c.type == 'longtext' %}<span class="card-body-text"{% if card_body_lines %} style="-webkit-line-clamp:{{ card_body_lines }}"{% endif %}>{{ rec.cells.get(c.id) | striptags }}</span>
                             {% else %}{{ d }}{% endif %}
                         </span>
                     </div>
@@ -248,6 +249,7 @@
                 <a href="?vt=calendar{% if cal_mode=='week' %}&cal=week&wd={{ cal_prev }}{% else %}&m={{ cal_prev }}{% endif %}" class="cal-nav">‹</a>
                 <span class="cal-month">{{ cal_month_label }}</span>
                 <a href="?vt=calendar{% if cal_mode=='week' %}&cal=week&wd={{ cal_next }}{% else %}&m={{ cal_next }}{% endif %}" class="cal-nav">›</a>
+                <a href="?vt=calendar{% if cal_mode=='week' %}&cal=week{% endif %}" class="cal-today-btn">Today</a>
             </div>
             <div class="cal-mode-toggle">
                 <a href="?vt=calendar" class="cal-mode-btn {% if cal_mode != 'week' %}active{% endif %}">Month</a>
@@ -398,6 +400,13 @@
         Choose which fields appear on each card. The title is always shown.
     </p>
     <div id="card-fields-list" class="detail-fields-list"></div>
+    <label class="dl-collapse-opt">Body text on cards:
+        <select id="card-body-lines" class="form-input-sm">
+            <option value="1">1 line</option>
+            <option value="3">3 lines</option>
+            <option value="0">Full text</option>
+        </select>
+    </label>
     <button type="button" class="btn-primary" onclick="saveCardFields()">Save</button>
 </div>
 
@@ -444,6 +453,7 @@ var DETAIL_FIELDS = {{ detail_field_ids | tojson if detail_field_ids is defined 
 var DETAIL_MODE = '{{ detail_mode if detail_mode is defined else "crm" }}';
 var DETAIL_COLLAPSED = {{ 'true' if (detail_collapsed is defined and detail_collapsed) else 'false' }};
 var CARD_FIELDS = {{ card_field_ids | tojson if card_field_ids is defined else '[]' }};
+var CARD_BODY_LINES = {{ card_body_lines if card_body_lines is defined else 3 }};
 var CAL_FIELDS = {{ cal_field_ids | tojson if cal_field_ids is defined else '[]' }};
 var DATE_COL_ID = {{ date_col_id if date_col_id else 'null' }};
 
@@ -588,14 +598,18 @@ function openCardDetails(){
             '<span>'+escapeHtml(c.name)+'</span>'+
             '</div>';
     }).join('');
+    var bl = document.getElementById('card-body-lines');
+    if (bl) bl.value = String(CARD_BODY_LINES);
     openModal('modal-card-details');
 }
 function saveCardFields(){
     var ids = Array.from(document.querySelectorAll('#card-fields-list .dl-field-row'))
         .filter(function(row){ var cb = row.querySelector('.card-field-cb'); return cb && cb.checked; })
         .map(function(row){ return parseInt(row.dataset.colId); });
+    var bl = document.getElementById('card-body-lines');
+    var bodyLines = bl ? parseInt(bl.value) : 3;
     fetch('/api/views/'+VIEW_ID+'/card-fields', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({fields: ids})}).then(function(){ window.location.reload(); });
+        body: JSON.stringify({fields: ids, body_lines: bodyLines})}).then(function(){ window.location.reload(); });
 }
 
 // ── Calendar item details ─────────────────────────────────────

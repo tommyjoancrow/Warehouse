@@ -2237,6 +2237,13 @@ kbd {
 .card-field { display: flex; gap: 8px; font-size: 12px; }
 .card-field-label { color: var(--text-faint); min-width: 70px; flex-shrink: 0; }
 .card-field-val { color: var(--text); }
+.card-body-text {
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
 
 /* ── CALENDAR ───────────────────────────────────────────────── */
 .cal-wrap { padding: 4px 0 40px; }
@@ -2247,6 +2254,8 @@ kbd {
 .cal-mode-btn { font-size: 12px; padding: 4px 12px; border-radius: 5px; text-decoration: none; color: var(--text-muted); }
 .cal-mode-btn:hover { color: var(--text); }
 .cal-mode-btn.active { background: var(--white); color: var(--text); box-shadow: var(--shadow-sm); font-weight: 600; }
+.cal-today-btn { margin-left: 8px; font-size: 12px; padding: 4px 12px; border: 1px solid var(--border); border-radius: 6px; text-decoration: none; color: var(--text-muted); }
+.cal-today-btn:hover { border-color: var(--green); color: var(--green); background: var(--green-hover); }
 /* week view: taller day cells */
 .cal-grid-week .cal-day { min-height: 320px; }
 .cal-nav { font-size: 22px; text-decoration: none; color: var(--text-muted); padding: 0 8px; border-radius: 6px; }

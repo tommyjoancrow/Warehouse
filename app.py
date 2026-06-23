@@ -854,9 +854,15 @@ def _render_table(conn, table, view):
         except Exception:
             detail_field_ids = []
     card_field_ids = []
+    card_body_lines = 3
     if view:
         try:
-            card_field_ids = json.loads(view['card_fields_json'] or '[]')
+            raw = json.loads(view['card_fields_json'] or '[]')
+            if isinstance(raw, dict):
+                card_field_ids = raw.get('fields', [])
+                card_body_lines = int(raw.get('body_lines', 3))
+            else:
+                card_field_ids = raw
         except Exception:
             card_field_ids = []
     cal_field_ids = []
@@ -915,7 +921,7 @@ def _render_table(conn, table, view):
         filters=filters, filter_logic=logic, sorts=sorts, hidden=list(hidden_set),
         search=search, date_col_id=date_col_id, date_columns=date_columns,
         detail_field_ids=detail_field_ids, detail_mode=detail_mode, detail_collapsed=detail_collapsed,
-        card_field_ids=card_field_ids, cal_field_ids=cal_field_ids,
+        card_field_ids=card_field_ids, card_body_lines=card_body_lines, cal_field_ids=cal_field_ids,
         show_archived=show_archived, archived_count=archived_count,
         cal_weeks=cal_weeks, cal_month_label=cal_month_label, cal_prev=cal_prev, cal_next=cal_next, cal_mode=cal_mode,
         page_title=(view['name'] if view else table['name']),
@@ -1595,9 +1601,10 @@ def view_detail_fields(view_id):
 @app.route("/api/views/<int:view_id>/card-fields", methods=["POST"])
 def view_card_fields(view_id):
     data = request.get_json() or {}
+    payload = {'fields': data.get('fields', []), 'body_lines': int(data.get('body_lines', 3))}
     conn = get_db()
     conn.execute("UPDATE views SET card_fields_json=? WHERE id=?",
-                 (json.dumps(data.get('fields', [])), view_id))
+                 (json.dumps(payload), view_id))
     conn.commit()
     conn.close()
     return jsonify({"ok": True})

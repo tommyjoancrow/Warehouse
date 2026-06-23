@@ -2169,6 +2169,35 @@ kbd {
 }
 .nld-item:hover, .nld-item.nld-active { background: var(--green-light); color: var(--green-dark); }
 
+.ql-link-tip {
+    position: absolute;
+    z-index: 9999;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.13);
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 6px;
+    white-space: nowrap;
+}
+.ql-link-tip.hidden { display: none; }
+.ql-tip-btn {
+    font-size: 12px;
+    padding: 3px 8px;
+    border-radius: 5px;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+}
+.ql-tip-btn:hover { background: var(--green-light); color: var(--green-dark); }
+.ql-tip-open { color: var(--green-dark); font-weight: 500; }
+.ql-tip-remove { color: var(--text-faint); }
+
 /* ════════════════════════════════════════════════════════════════
    TABLES MODEL  (grid / card / calendar / record editor)
    ════════════════════════════════════════════════════════════════ */

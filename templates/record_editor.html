@@ -413,6 +413,52 @@ function setupNoteLink(quill){
         quill.setSelection(start+label.length+1);
         dd.classList.add('hidden'); mode=false;
     }
+
+    // ── Link tooltip (click to open or edit) ──────────────────
+    var tip = document.createElement('div');
+    tip.className = 'ql-link-tip hidden';
+    document.body.appendChild(tip);
+    var _tipAnchor = null;
+
+    function showLinkTip(a){
+        _tipAnchor = a;
+        var href = a.getAttribute('href') || '';
+        var isRecord = /^\/record\/\d+$/.test(href);
+        tip.innerHTML =
+            (isRecord ? '<a href="'+escapeHtml(href)+'" class="ql-tip-btn ql-tip-open" target="_self">↗ Open record</a>' : '<a href="'+escapeHtml(href)+'" class="ql-tip-btn ql-tip-open" target="_blank" rel="noopener">↗ Open link</a>') +
+            '<button class="ql-tip-btn" onclick="editLinkTip()">✎ Edit</button>' +
+            '<button class="ql-tip-btn ql-tip-remove" onclick="removeLinkTip()">× Remove</button>';
+        var r = a.getBoundingClientRect();
+        tip.style.left = (r.left + window.scrollX) + 'px';
+        tip.style.top  = (r.bottom + window.scrollY + 4) + 'px';
+        tip.classList.remove('hidden');
+    }
+    function hideLinkTip(){ tip.classList.add('hidden'); _tipAnchor=null; }
+    window.removeLinkTip = function(){
+        if(!_tipAnchor) return;
+        var blot = Quill.find(_tipAnchor);
+        if(blot){ var idx=quill.getIndex(blot); quill.formatText(idx, _tipAnchor.textContent.length, 'link', false); }
+        hideLinkTip();
+    };
+    window.editLinkTip = function(){
+        if(!_tipAnchor) return;
+        var cur = _tipAnchor.getAttribute('href') || '';
+        var neu = prompt('Edit link URL:', cur);
+        if(neu===null) return;
+        if(neu.trim()===''){
+            window.removeLinkTip(); return;
+        }
+        _tipAnchor.setAttribute('href', neu.trim());
+        hideLinkTip();
+    };
+    quill.root.addEventListener('click', function(e){
+        var a = e.target.closest('a[href]');
+        if(a){ e.preventDefault(); showLinkTip(a); return; }
+        hideLinkTip();
+    });
+    document.addEventListener('click', function(e){
+        if(!tip.contains(e.target) && e.target !== _tipAnchor) hideLinkTip();
+    }, true);
 }
 
 // ── Autosave ──────────────────────────────────────────────────

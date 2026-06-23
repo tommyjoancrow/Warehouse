@@ -1227,12 +1227,13 @@ def record_detail(record_id):
         reverse, pid, cbi = backlink_index(conn, rec['table_id'])
         for bc in back_cols:
             backlinks[bc['id']] = backlinks_for(reverse, pid, record_id, bc, cbi)
+    page_title = primary_values(conn, [record_id]).get(record_id) or 'Record'
     conn.close()
     return render_template('record_editor.html', table=dict(table), columns=columns,
                            record=dict(rec), cells=cells, link_display=link_display, view_id=view_id,
                            back_view=back_view, detail_mode=detail_mode, detail_collapsed=detail_collapsed,
                            backlinks=backlinks, ops_by_type=OPS_BY_TYPE, active_table_id=rec['table_id'],
-                           page_title=rec['name'] or 'Record')
+                           page_title=page_title)
 
 def _save_cells(conn, record_id, columns, form, only_ids=None):
     for c in columns:

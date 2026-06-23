@@ -914,6 +914,26 @@ def _render_table(conn, table, view):
             date_col_id = date_columns[0]['id'] if date_columns else None
         if date_col_id:
             cal_weeks, cal_month_label, cal_prev, cal_next, cal_mode = build_calendar(recs, date_col_id, primary, columns, cal_field_ids)
+    # Enrich link-filter rules with the linked record's name (so the filter UI
+    # shows the picked record by name, not a bare id). Done after view_dirty.
+    link_col_ids = {c['id'] for c in columns if c['type'] == 'link'}
+    if link_col_ids:
+        needed = set()
+        for g in filters:
+            for rule in (g.get('rules') or []) if isinstance(g, dict) else []:
+                try:
+                    if int(rule.get('c')) in link_col_ids and rule.get('v'):
+                        needed.add(int(rule['v']))
+                except (ValueError, TypeError):
+                    pass
+        names = primary_values(conn, needed) if needed else {}
+        for g in filters:
+            for rule in (g.get('rules') or []) if isinstance(g, dict) else []:
+                try:
+                    if int(rule.get('c')) in link_col_ids and rule.get('v'):
+                        rule['_label'] = names.get(int(rule['v']), 'Record ' + str(rule['v']))
+                except (ValueError, TypeError):
+                    pass
     return render_template('table_view.html',
         table=table, columns=columns, visible_columns=visible_columns,
         records=recs, link_names=link_names, primary=primary,

@@ -2827,6 +2827,19 @@ tr:hover .row-expand { opacity: 1; }
 
 .sf-unit { font-size: 11px; color: var(--text-muted); }
 
+/* filter value: link record picker */
+.sf-link-pick { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+.sf-link-clear { background: none; border: none; color: var(--text-faint); cursor: pointer; font-size: 12px; padding: 0 2px; }
+.sf-link-clear:hover { color: var(--danger, #c0392b); }
+.sf-link-results {
+    position: absolute; top: 100%; left: 0; z-index: 60;
+    min-width: 180px; max-height: 200px; overflow-y: auto;
+    background: var(--white); border: 1px solid var(--border);
+    border-radius: 6px; box-shadow: var(--shadow); margin-top: 2px;
+}
+.sf-link-result { padding: 6px 10px; font-size: 12px; cursor: pointer; }
+.sf-link-result:hover { background: var(--green-hover); color: var(--green); }
+
 /* ── Clickable link chips ───────────────────────────────────── */
 .chip-link-label { text-decoration: none; color: inherit; cursor: pointer; }
 .chip-link-label:hover { text-decoration: underline; }

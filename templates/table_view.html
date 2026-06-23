@@ -753,8 +753,44 @@ function filterValueInput(col, rule, gi, ri){
         opts.forEach(function(o){ h += '<option value="'+escapeHtml(o)+'"'+(String(o)===String(v)?' selected':'')+'>'+escapeHtml(o)+'</option>'; });
         return h + '</select>';
     }
+    if (t === 'link') {
+        var label = rule._label || (v ? 'Record ' + v : '');
+        var rid = 'sflink-' + gi + '-' + ri;
+        return '<span class="sf-link-pick">' +
+            '<input type="text" class="form-input-sm sf-link-search" value="'+escapeHtml(label)+'" placeholder="search record…" autocomplete="off" ' +
+                'oninput="filterLinkSearch(this,'+gi+','+ri+')" onfocus="filterLinkSearch(this,'+gi+','+ri+')">' +
+            (v ? '<button type="button" class="sf-link-clear" onclick="filterLinkClear('+gi+','+ri+')" title="Clear">✕</button>' : '') +
+            '<div class="sf-link-results hidden" id="'+rid+'"></div>' +
+        '</span>';
+    }
     var itype = (t === 'email') ? 'email' : (t === 'url') ? 'url' : 'text';
     return '<input type="'+itype+'" class="form-input-sm sf-value-input" value="'+escapeHtml(v)+'" oninput="'+onchg+'" placeholder="value…">';
+}
+function filterLinkSearch(inp, gi, ri){
+    var box = document.getElementById('sflink-'+gi+'-'+ri);
+    if (!box) return;
+    fetch('/api/records/search?table_id='+TABLE_ID+'&q='+encodeURIComponent(inp.value))
+        .then(function(r){ return r.json(); })
+        .then(function(items){
+            if (!items.length){ box.classList.add('hidden'); return; }
+            box.innerHTML = items.map(function(it){
+                return '<div class="sf-link-result" data-id="'+it.id+'" data-label="'+escapeHtml(it.label)+'">'+escapeHtml(it.label)+'</div>';
+            }).join('');
+            box.querySelectorAll('.sf-link-result').forEach(function(el){
+                el.onmousedown = function(e){ e.preventDefault(); filterLinkPick(gi, ri, parseInt(el.dataset.id), el.dataset.label); };
+            });
+            box.classList.remove('hidden');
+        });
+}
+function filterLinkPick(gi, ri, id, label){
+    var rule = currentFilterGroups[gi].rules[ri];
+    rule.v = String(id); rule._label = label;
+    renderFilterGroups(); syncFilterGroups();
+}
+function filterLinkClear(gi, ri){
+    var rule = currentFilterGroups[gi].rules[ri];
+    rule.v = ''; rule._label = '';
+    renderFilterGroups(); syncFilterGroups();
 }
 function renderFilterGroups(){
     var box = document.getElementById('filter-conditions');

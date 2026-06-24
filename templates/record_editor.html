@@ -224,6 +224,7 @@ document.querySelectorAll('.rich-editor').forEach(function(div){
     richEditors.push({col: colId, quill: q});
     setupNoteLink(q);
     setupTemplatePicker(q);
+    setupTableInsert(q);
 });
 
 // ── Template autofill (Ctrl + /) ──────────────────────────────
@@ -371,6 +372,54 @@ function pickTag(colId, val){
     picker.querySelector('.tag-input').value = '';
     document.getElementById('tag-results-'+colId).classList.add('hidden');
 }
+
+// ── Table insert (Ctrl+Shift+T) ───────────────────────────────
+function setupTableInsert(quill){
+    quill.keyboard.addBinding({ key: 'T', shortKey: true, shiftKey: true }, function(){
+        var tip = document.getElementById('table-insert-tip');
+        if (!tip) return;
+        var sel = quill.getSelection(true);
+        var bounds = quill.getBounds(sel.index);
+        var er = quill.root.getBoundingClientRect();
+        tip.style.left = (er.left + bounds.left) + 'px';
+        tip.style.top  = (er.top + window.scrollY + bounds.bottom + 6) + 'px';
+        tip.classList.remove('hidden');
+        tip._quill = quill;
+        tip._index = sel.index;
+        setTimeout(function(){ tip.querySelector('.tbl-rows').select(); }, 0);
+    });
+}
+(function(){
+    var tip = document.createElement('div');
+    tip.id = 'table-insert-tip';
+    tip.className = 'ql-link-tip hidden';
+    tip.innerHTML =
+        '<span style="font-size:12px;color:var(--text-faint);margin-right:4px;">Table</span>' +
+        '<input type="number" class="tbl-rows form-input-sm" value="3" min="1" max="20" style="width:42px" title="Rows">' +
+        '<span style="font-size:12px;padding:0 3px;color:var(--text-faint)">×</span>' +
+        '<input type="number" class="tbl-cols form-input-sm" value="3" min="1" max="20" style="width:42px" title="Columns">' +
+        '<button class="ql-tip-btn ql-tip-open" id="table-insert-go">Insert</button>';
+    document.body.appendChild(tip);
+    function doInsert(){
+        var rows = Math.max(1, Math.min(20, parseInt(tip.querySelector('.tbl-rows').value) || 3));
+        var cols = Math.max(1, Math.min(20, parseInt(tip.querySelector('.tbl-cols').value) || 3));
+        var cell = '<td style="border:1px solid #ccc;padding:4px 8px;min-width:60px"><br></td>';
+        var row  = '<tr>' + cell.repeat(cols) + '</tr>';
+        var html = '<p><br></p><table style="border-collapse:collapse;width:100%"><tbody>' + row.repeat(rows) + '</tbody></table><p><br></p>';
+        var q = tip._quill;
+        var idx = tip._index || q.getLength();
+        q.clipboard.dangerouslyPasteHTML(idx, html);
+        tip.classList.add('hidden');
+    }
+    document.getElementById('table-insert-go').addEventListener('click', doInsert);
+    tip.addEventListener('keydown', function(e){
+        if (e.key === 'Enter'){ e.preventDefault(); doInsert(); }
+        if (e.key === 'Escape') tip.classList.add('hidden');
+    });
+    document.addEventListener('click', function(e){
+        if (!tip.contains(e.target)) tip.classList.add('hidden');
+    }, true);
+})();
 
 // ── [[ note linking inside rich text ─────────────────────────
 function setupNoteLink(quill){

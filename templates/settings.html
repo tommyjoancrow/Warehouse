@@ -51,6 +51,7 @@ function initTemplateEditor(card){
         ['bold','italic','underline'], [{list:'ordered'},{list:'bullet'},{list:'check'}], ['link','clean']
     ] } });
     tmplEditors[id] = q;
+    setupTableInsert(q);
 }
 document.querySelectorAll('.tmpl-card').forEach(initTemplateEditor);
 

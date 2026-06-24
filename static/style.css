@@ -64,7 +64,9 @@ input, select, textarea { font-family: inherit; }
     font-weight: 700;
     color: var(--green-dark);
     letter-spacing: -0.3px;
+    text-decoration: none;
 }
+.app-logo:hover { opacity: 0.75; }
 
 .sidebar-search {
     padding: 10px 10px 6px;

@@ -34,20 +34,14 @@ Every record can show which other records link back to it — and those backlink
 ### Relative date filters ✦ *rare in databases*
 Filter by *overdue*, *upcoming*, *within N days*, *next N days*, *past N days* — without writing formulas. Airtable requires formula fields to approximate this. Useful for surfacing what needs attention right now.
 
-### Select fields sort by option order ✦ *not found in Airtable*
-When you sort by a Priority field (High / Medium / Low), it sorts in the order you defined — not A–Z. Airtable sorts select fields alphabetically.
-
 ### Templates with keyboard insertion ✦ *rare in databases*
 Create reusable rich-text snippets in Settings. Press `Ctrl+/` in any rich-text field to open the template picker — type to filter, ↑↓ to navigate, Enter to insert. Good for boilerplate structures, headers, or recurring note formats.
 
-### Calendar views on any date field ✦ *more flexible than most apps*
+### Calendar views on any date field ✦ *rare*
 Any date field can power a calendar view — due date, completion date, posting date, publication date. Month and week modes. Switch between them with a toggle; jump to today with one click. This means you can build a social media content calendar, a project deadline tracker, and a submission tracker all in the same database, each as its own calendar view.
 
 ### Infinitely nestable views ✦ *not found in Airtable*
 Views can be nested under other views for organization. Airtable has flat view lists. Here you can group related views into hierarchies — for example, a "Writing" parent view with children for "In Progress," "Pitched," and "Published."
-
-### Pin field ✦ *rare*
-Any record can be pinned. Pinned records always float to the top of every view, regardless of sort order. Useful for keeping active priorities visible.
 
 ### Named browser tabs
 The browser tab shows the record's name when you open a record — not just "Record." Small thing, but useful when you have multiple records open.
@@ -57,9 +51,6 @@ Created and Modified dates are stored and editable, so you can accurately date h
 
 ### Home view
 Set any view as your home — the app opens directly to it on launch.
-
-### Autosave everywhere
-All field types save 700ms after you stop typing. No Save button to click. Works on `beforeunload` too — nothing is lost if you close the tab mid-edit.
 
 ### Bulk editing ✦ *rare in notetaking apps*
 Select multiple records and archive them, delete them, or set a field to the same value across all of them at once. Essential for managing a large writing portfolio.

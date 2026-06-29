@@ -1,11 +1,12 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 import sqlite3
 import json
+import os
 from datetime import datetime, date, timedelta
 import calendar as cal_module
 
 app = Flask(__name__)
-DB_PATH = "notes.db"
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notes.db")
 
 # ── Column types ────────────────────────────────────────────────
 COLUMN_TYPES = [
